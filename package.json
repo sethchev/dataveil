@@ -1,0 +1,18 @@
+{
+  "name": "dataveil",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DataVeil: local privacy proxy for Oracle SQLcl MCP tool results.",
+  "type": "module",
+  "workspaces": [
+    "dataveil-sqlcl-mcp-proxy"
+  ],
+  "scripts": {
+    "build": "npm run build -w @dataveil/sqlcl-mcp-proxy",
+    "test": "node --test test/sqlcl-mcp-proxy.test.mjs",
+    "test:sqlcl-proxy": "node --test test/sqlcl-mcp-proxy.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

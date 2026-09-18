@@ -1,0 +1,103 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { redactSensitiveText, sanitizeValue } from '../dataveil-sqlcl-mcp-proxy/src/redact.js';
+import { createStderrSanitizer, parseArguments, sanitizeServerMessage } from '../dataveil-sqlcl-mcp-proxy/src/proxy.js';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const proxy = join(here, '..', 'dataveil-sqlcl-mcp-proxy', 'src', 'index.js');
+const fakeServer = join(here, 'fixtures', 'fake-sqlcl-mcp.mjs');
+
+test('redacts pattern-based, sensitive-column, multiline, and numeric PII', () => {
+  const input = '"FIRST_NAME","EMAIL","NOTES"\n"Alice","alice@example.com","line one\nline two"';
+  const result = redactSensitiveText(input);
+  assert.equal(result.value.includes('Alice'), false);
+  assert.equal(result.value.includes('alice@example.com'), false);
+  assert.equal(result.value.includes('line one\nline two'), true);
+  assert.match(result.value, /\[REDACTED_PII\]/);
+
+  const structured = sanitizeValue({ table_name: 'EMPLOYEES', version: '26.2.2.0', ssn: 123456789 });
+  assert.deepEqual(structured.value, { table_name: 'EMPLOYEES', version: '26.2.2.0', ssn: '[REDACTED_PII]' });
+  assert.equal(structured.matches, 1);
+});
+
+test('redacts IP addresses without mistaking software versions for PII', () => {
+  const result = redactSensitiveText('client=192.0.2.10 version=26.2.2.0.0');
+  assert.equal(result.value, 'client=[REDACTED_IP] version=26.2.2.0.0');
+});
+
+test('preserves JSON-RPC envelopes and metadata while sanitizing only tool-call payloads', () => {
+  const pendingRequests = new Map([
+    ['string:"alice@example.com"', 'tools/call'],
+    ['number:1', 'tools/list'],
+    ['string:"1"', 'tools/call']
+  ]);
+  const metadata = { jsonrpc: '2.0', id: 1, result: { description: 'support@example.com' } };
+  assert.strictEqual(sanitizeServerMessage(metadata, { mode: 'redact', pendingRequests }).value, metadata);
+
+  const response = { jsonrpc: '2.0', id: 'alice@example.com', result: { content: [{ type: 'text', text: 'alice@example.com' }] } };
+  const sanitized = sanitizeServerMessage(response, { mode: 'redact', pendingRequests }).value;
+  assert.equal(sanitized.id, 'alice@example.com');
+  assert.equal(sanitized.result.content[0].text, '[REDACTED_EMAIL]');
+
+  const serverRequest = { jsonrpc: '2.0', id: '1', method: 'sampling/createMessage', params: {} };
+  assert.strictEqual(sanitizeServerMessage(serverRequest, { mode: 'block', pendingRequests }).value, serverRequest);
+  const blocked = sanitizeServerMessage({ jsonrpc: '2.0', id: '1', result: { email: 'person@example.com' } }, { mode: 'block', pendingRequests }).value;
+  assert.equal(blocked.result.isError, true);
+  assert.match(blocked.result.content[0].text, /DATAVEIL_BLOCKED/);
+});
+
+test('buffers SQLcl stderr so PII split across chunks is still redacted', () => {
+  let output = '';
+  const sanitizer = createStderrSanitizer((text) => { output += text; });
+  sanitizer.push(Buffer.from('contact alice@exam'));
+  sanitizer.push(Buffer.from('ple.com now\n'));
+  sanitizer.end();
+  assert.equal(output.includes('alice@example.com'), false);
+  assert.match(output, /\[REDACTED_EMAIL\]/);
+});
+
+test('rejects invalid configuration instead of weakening it', () => {
+  assert.throws(() => parseArguments([], { DATAVEIL_PII_MODE: 'blok' }), /PII mode/);
+  assert.throws(() => parseArguments([], { DATAVEIL_MAX_MESSAGE_BYTES: 'large' }), /max-message-bytes/);
+  assert.throws(() => parseArguments(['--sqlcl'], {}), /requires a value/);
+});
+
+test('acts as a transparent MCP server while sanitizing tool results', async () => {
+  const child = spawn(process.execPath, [
+    proxy,
+    '--sqlcl', process.execPath,
+    '--sqlcl-arg', fakeServer
+  ], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+
+  const requests = [
+    { jsonrpc: '2.0', id: 'alice@example.com', method: 'initialize', params: {} },
+    { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+    { jsonrpc: '2.0', id: '1', method: 'tools/call', params: { name: 'sql_run', arguments: {} } }
+  ];
+  child.stdin.end(requests.map((request) => JSON.stringify(request)).join('\n') + '\n');
+
+  const exitCode = await new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', resolve);
+  });
+
+  assert.equal(exitCode, 0, stderr);
+  const responses = stdout.trim().split('\n').map(JSON.parse);
+  assert.equal(responses[0].id, 'alice@example.com');
+  assert.equal(responses[0].result.serverInfo.name, 'fake-sqlcl');
+  assert.equal(responses[1].result.tools[0].description, 'Execute SQL; contact support@example.com');
+  const toolText = responses[2].result.content[0].text;
+  assert.equal(toolText.includes('Alice'), false);
+  assert.equal(toolText.includes('alice@example.com'), false);
+  assert.equal(toolText.includes('555-123-4567'), false);
+  assert.equal(toolText.includes('[REDACTED_'), true);
+  assert.match(stderr, /\[dataveil\] redacted/);
+});

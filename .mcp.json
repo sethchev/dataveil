@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "oracle": {
+      "command": "node",
+      "args": [
+        "./dataveil-sqlcl-mcp-proxy/src/index.js"
+      ],
+      "env": {
+        "DATAVEIL_PII_MODE": "redact"
+      }
+    }
+  }
+}
