@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { redactSensitiveText, sanitizeValue } from '../dataveil-sqlcl-mcp-proxy/src/redact.js';
-import { createStderrSanitizer, parseArguments, sanitizeServerMessage } from '../dataveil-sqlcl-mcp-proxy/src/proxy.js';
+import { redactSensitiveText, sanitizeValue } from '../dataveil-mcp-proxy/src/redact.js';
+import { createStderrSanitizer, parseArguments, sanitizeServerMessage } from '../dataveil-mcp-proxy/src/proxy.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const proxy = join(here, '..', 'dataveil-sqlcl-mcp-proxy', 'src', 'index.js');
-const fakeServer = join(here, 'fixtures', 'fake-sqlcl-mcp.mjs');
+const proxy = join(here, '..', 'dataveil-mcp-proxy', 'src', 'index.js');
+const fakeServer = join(here, 'fixtures', 'fake-mcp-server.mjs');
 
 test('redacts pattern-based, sensitive-column, multiline, and numeric PII', () => {
   const input = '"FIRST_NAME","EMAIL","NOTES"\n"Alice","alice@example.com","line one\nline two"';
@@ -47,9 +47,10 @@ test('preserves JSON-RPC envelopes and metadata while sanitizing only tool-call 
   const blocked = sanitizeServerMessage({ jsonrpc: '2.0', id: '1', result: { email: 'person@example.com' } }, { mode: 'block', pendingRequests }).value;
   assert.equal(blocked.result.isError, true);
   assert.match(blocked.result.content[0].text, /DATAVEIL_BLOCKED/);
+  assert.match(blocked.result.content[0].text, /MCP backend/);
 });
 
-test('buffers SQLcl stderr so PII split across chunks is still redacted', () => {
+test('buffers backend stderr so PII split across chunks is still redacted', () => {
   let output = '';
   const sanitizer = createStderrSanitizer((text) => { output += text; });
   sanitizer.push(Buffer.from('contact alice@exam'));
@@ -62,14 +63,14 @@ test('buffers SQLcl stderr so PII split across chunks is still redacted', () => 
 test('rejects invalid configuration instead of weakening it', () => {
   assert.throws(() => parseArguments([], { DATAVEIL_PII_MODE: 'blok' }), /PII mode/);
   assert.throws(() => parseArguments([], { DATAVEIL_MAX_MESSAGE_BYTES: 'large' }), /max-message-bytes/);
-  assert.throws(() => parseArguments(['--sqlcl'], {}), /requires a value/);
+  assert.throws(() => parseArguments(['--command'], {}), /requires a value/);
 });
 
-test('acts as a transparent MCP server while sanitizing tool results', async () => {
+test('acts as a transparent database-agnostic MCP server while sanitizing tool results', async () => {
   const child = spawn(process.execPath, [
     proxy,
-    '--sqlcl', process.execPath,
-    '--sqlcl-arg', fakeServer
+    '--command', process.execPath,
+    '--arg', fakeServer
   ], { stdio: ['pipe', 'pipe', 'pipe'] });
 
   let stdout = '';
@@ -80,7 +81,7 @@ test('acts as a transparent MCP server while sanitizing tool results', async () 
   const requests = [
     { jsonrpc: '2.0', id: 'alice@example.com', method: 'initialize', params: {} },
     { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
-    { jsonrpc: '2.0', id: '1', method: 'tools/call', params: { name: 'sql_run', arguments: {} } }
+    { jsonrpc: '2.0', id: '1', method: 'tools/call', params: { name: 'query', arguments: {} } }
   ];
   child.stdin.end(requests.map((request) => JSON.stringify(request)).join('\n') + '\n');
 
@@ -92,8 +93,8 @@ test('acts as a transparent MCP server while sanitizing tool results', async () 
   assert.equal(exitCode, 0, stderr);
   const responses = stdout.trim().split('\n').map(JSON.parse);
   assert.equal(responses[0].id, 'alice@example.com');
-  assert.equal(responses[0].result.serverInfo.name, 'fake-sqlcl');
-  assert.equal(responses[1].result.tools[0].description, 'Execute SQL; contact support@example.com');
+  assert.equal(responses[0].result.serverInfo.name, 'fake-mcp-server');
+  assert.equal(responses[1].result.tools[0].description, 'Run a database query; contact support@example.com');
   const toolText = responses[2].result.content[0].text;
   assert.equal(toolText.includes('Alice'), false);
   assert.equal(toolText.includes('alice@example.com'), false);

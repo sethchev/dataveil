@@ -28,21 +28,30 @@ function downloadedSqlcl() {
     .find(existsSync) ?? null;
 }
 
-export function discoverSqlcl(explicitPath) {
+export function discoverCommand(explicitPath, env = process.env) {
   return [
     explicitPath,
-    process.env.DATAVEIL_SQLCL,
-    process.env.SECURE_ORACLE_SQLCL,
+    env.DATAVEIL_COMMAND,
+    env.DATAVEIL_SQLCL,
+    env.SECURE_ORACLE_SQLCL,
     executableOnPath('sql'),
     downloadedSqlcl()
   ].find((candidate) => typeof candidate === 'string' && candidate.length > 0) ?? null;
 }
 
+function usesSqlclDefault(command, env = process.env) {
+  return !command && !env.DATAVEIL_COMMAND && (env.DATAVEIL_SQLCL || env.SECURE_ORACLE_SQLCL || executableOnPath('sql') || downloadedSqlcl());
+}
+
+// Backward-compatible Oracle-specific name.
+export const discoverSqlcl = discoverCommand;
+
 export function parseArguments(argv, env = process.env) {
   const configuredMode = env.DATAVEIL_PII_MODE ?? 'redact';
   const options = {
-    sqlcl: null,
-    sqlclArgs: [],
+    command: null,
+    commandArgs: [],
+    sqlclCompatibility: false,
     mode: configuredMode,
     maxMessageBytes: env.DATAVEIL_MAX_MESSAGE_BYTES === undefined
       ? DEFAULT_MAX_MESSAGE_BYTES
@@ -56,8 +65,15 @@ export function parseArguments(argv, env = process.env) {
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (argument === '--sqlcl') options.sqlcl = nextValue(index++, argument);
-    else if (argument === '--sqlcl-arg') options.sqlclArgs.push(nextValue(index++, argument));
+    if (argument === '--command') options.command = nextValue(index++, argument);
+    else if (argument === '--sqlcl') {
+      options.command = nextValue(index++, argument);
+      options.sqlclCompatibility = true;
+    } else if (argument === '--arg') options.commandArgs.push(nextValue(index++, argument));
+    else if (argument === '--sqlcl-arg') {
+      options.commandArgs.push(nextValue(index++, argument));
+      options.sqlclCompatibility = true;
+    }
     else if (argument === '--mode') options.mode = nextValue(index++, argument);
     else if (argument === '--max-message-bytes') options.maxMessageBytes = Number(nextValue(index++, argument));
     else if (argument === '--help') options.help = true;
@@ -70,7 +86,7 @@ export function parseArguments(argv, env = process.env) {
   if (!Number.isSafeInteger(options.maxMessageBytes) || options.maxMessageBytes < 1024) {
     throw new Error('--max-message-bytes must be an integer of at least 1024');
   }
-  if (options.sqlclArgs.length === 0) options.sqlclArgs.push('-mcp');
+  if (options.commandArgs.length === 0 && (options.sqlclCompatibility || usesSqlclDefault(options.command, env))) options.commandArgs.push('-mcp');
   return options;
 }
 
@@ -82,7 +98,7 @@ function blockedToolResult(categories) {
   return {
     content: [{
       type: 'text',
-      text: `[DATAVEIL_BLOCKED] SQLcl returned sensitive data (${categories.join(', ')}). The result was withheld locally.`
+      text: `[DATAVEIL_BLOCKED] The MCP backend returned sensitive data (${categories.join(', ')}). The result was withheld locally.`
     }],
     isError: true
   };
@@ -130,13 +146,13 @@ function createLineProcessor({ maxBytes, onMessage, onError }) {
         try {
           onMessage(JSON.parse(line));
         } catch {
-          onError(new Error('SQLcl emitted non-JSON data on its MCP stdout; refusing to forward it'));
+          onError(new Error('MCP backend emitted non-JSON data on stdout; refusing to forward it'));
         }
       }
     },
     end() {
       if (buffer.toString('utf8').trim()) {
-        onError(new Error('SQLcl MCP stdout ended with an incomplete JSON message'));
+        onError(new Error('MCP backend stdout ended with an incomplete JSON message'));
       }
     }
   };
@@ -160,7 +176,7 @@ export function createStderrSanitizer(write) {
         discarding = false;
       }
       if (Buffer.byteLength(buffer) > STDERR_LIMIT_BYTES) {
-        write('[dataveil] SQLcl stderr line withheld because it exceeded the privacy buffer limit\n');
+        write('[dataveil] MCP backend stderr line withheld because it exceeded the privacy buffer limit\n');
         buffer = '';
         discarding = true;
       }
@@ -173,10 +189,10 @@ export function createStderrSanitizer(write) {
 }
 
 export function runProxy(options) {
-  const sqlcl = discoverSqlcl(options.sqlcl);
-  if (!sqlcl) throw new Error('Could not find SQLcl. Set DATAVEIL_SQLCL or pass --sqlcl /path/to/sql.');
+  const command = discoverCommand(options.command);
+  if (!command) throw new Error('Could not find the MCP backend command. Set DATAVEIL_COMMAND or pass --command /path/to/backend.');
 
-  const child = spawn(sqlcl, options.sqlclArgs, { env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(command, options.commandArgs, { env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
   const pendingRequests = new Map();
   let shuttingDown = false;
   let killTimer;
@@ -234,7 +250,7 @@ export function runProxy(options) {
     }
   });
 
-  const stderr = createStderrSanitizer((text) => process.stderr.write(`[sqlcl] ${text}`));
+  const stderr = createStderrSanitizer((text) => process.stderr.write(`[mcp-backend] ${text}`));
   function onClientData(chunk) { clientMessages.push(chunk); }
   function onClientEnd() {
     clientMessages.end();
@@ -256,7 +272,7 @@ export function runProxy(options) {
     if (killTimer) clearTimeout(killTimer);
     stopInput();
     if (code && !shuttingDown) {
-      process.stderr.write(`[dataveil] SQLcl MCP exited with code ${code}${signal ? ` (${signal})` : ''}\n`);
+      process.stderr.write(`[dataveil] MCP backend exited with code ${code}${signal ? ` (${signal})` : ''}\n`);
     }
     process.exitCode = code ?? (signal && !shuttingDown ? 1 : 0);
   });

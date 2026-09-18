@@ -11,7 +11,7 @@ lines.on('line', (line) => {
       result: {
         protocolVersion: '2025-03-26',
         capabilities: { tools: {} },
-        serverInfo: { name: 'fake-sqlcl', version: '1.0.0' }
+        serverInfo: { name: 'fake-mcp-server', version: '1.0.0' }
       }
     })}\n`);
     return;
@@ -19,7 +19,7 @@ lines.on('line', (line) => {
   if (request.method === 'tools/list') {
     process.stdout.write(`${JSON.stringify({
       jsonrpc: '2.0', id: request.id,
-      result: { tools: [{ name: 'sql_run', description: 'Execute SQL; contact support@example.com' }] }
+      result: { tools: [{ name: 'query', description: 'Run a database query; contact support@example.com' }] }
     })}\n`);
     return;
   }

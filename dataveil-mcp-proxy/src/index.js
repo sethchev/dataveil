@@ -2,21 +2,29 @@
 import { parseArguments, runProxy } from './proxy.js';
 
 function usage() {
-  return `DataVeil SQLcl MCP privacy proxy
+  return `DataVeil MCP privacy proxy
 
-Usage: dataveil-sqlcl-mcp-proxy [options]
+Usage: dataveil-mcp-proxy [options]
 
 Options:
-  --sqlcl PATH              SQLcl executable (auto-discovered by default)
-  --sqlcl-arg ARG           Child argument; repeat as needed (default: -mcp)
+  --command PATH            MCP backend command to launch
+  --arg ARG                 Backend argument; repeat as needed
   --mode redact|block       Redact fields or block sensitive tool results
   --max-message-bytes N     Maximum MCP JSON message size (default: 16777216)
   --help                    Show this help
 
+Backward-compatible Oracle SQLcl options:
+  --sqlcl PATH              Alias for --command
+  --sqlcl-arg ARG           Alias for --arg
+
 Environment:
-  DATAVEIL_SQLCL            Preferred SQLcl executable
-  SECURE_ORACLE_SQLCL       Backward-compatible SQLcl executable
+  DATAVEIL_COMMAND          MCP backend command
   DATAVEIL_PII_MODE         redact (default) or block
+  DATAVEIL_SQLCL            Backward-compatible SQLcl command
+  SECURE_ORACLE_SQLCL       Backward-compatible SQLcl command
+
+If no backend arguments are provided and SQLcl is discovered through the
+backward-compatible SQLcl path, DataVeil adds -mcp automatically.
 `;
 }
 

@@ -1,15 +1,15 @@
 {
-  "name": "@dataveil/sqlcl-mcp-proxy",
+  "name": "@dataveil/mcp-proxy",
   "version": "0.1.0",
   "private": true,
-  "description": "Drop-in privacy proxy for Oracle SQLcl MCP",
+  "description": "Database-agnostic privacy proxy for stdio MCP servers",
   "type": "module",
   "bin": {
-    "dataveil-sqlcl-mcp-proxy": "src/index.js"
+    "dataveil-mcp-proxy": "src/index.js"
   },
   "scripts": {
     "build": "node --check src/index.js && node --check src/proxy.js && node --check src/redact.js",
-    "test": "node --test ../../test/sqlcl-mcp-proxy.test.mjs"
+    "test": "node --test ../../test/mcp-proxy.test.mjs"
   },
   "engines": {
     "node": ">=20"

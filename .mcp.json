@@ -3,10 +3,11 @@
     "oracle": {
       "command": "node",
       "args": [
-        "./dataveil-sqlcl-mcp-proxy/src/index.js"
+        "./dataveil-mcp-proxy/src/index.js"
       ],
       "env": {
-        "DATAVEIL_PII_MODE": "redact"
+        "DATAVEIL_PII_MODE": "redact",
+        "DATAVEIL_SQLCL": "/path/to/sqlcl/bin/sql"
       }
     }
   }
