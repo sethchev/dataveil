@@ -52,7 +52,7 @@ Default behavior is in-place redaction. For stricter environments, block mode wi
 
 ## MCP-only scope
 
-DataVeil only controls data returned through MCP. It is intentionally database-agnostic and does not parse database protocols directly. The proxy fails closed on malformed or oversized MCP output and terminates a backend that does not respond within the configured timeout.
+DataVeil only controls data returned through MCP. It is intentionally database-agnostic and does not parse database protocols directly. Both direct proxy and gateway mode use the same MCP message framing and tool-result sanitizer. Messages over `--max-message-bytes` (default 16 MiB), malformed JSON, and incomplete messages fail closed: direct mode stops the proxy; gateway mode disconnects the offending backend and returns an error for pending calls. A backend that does not respond within `--backend-timeout-ms` (default 120 seconds) is terminated. Redaction/blocking still applies only to backend `tools/call` results, not tool metadata.
 
 It does not manage direct, non-MCP database access paths, and it is not a replacement for backend permissions or least-privilege database accounts. Its job is to sanitize MCP tool results before an AI agent receives them.
 
@@ -123,39 +123,59 @@ Keep database credentials in the backend MCP server's normal local configuration
 
 After restarting the MCP client, the backend MCP tools are available through DataVeil.
 
-## DataVeil gateway mode
+## Set up the DataVeil gateway
 
-For a single protected MCP entry that can select named database backends at runtime, register the gateway:
+1. Install dependencies as shown above. Make sure the database MCP server works separately and keep its database credentials in its own secret store or saved connection, **not** in DataVeil's profile file.
+2. Create `dataveil-profiles.json` in the repository root (this local file is gitignored) with a named stdio backend:
 
-```json
-{
-  "mcpServers": {
-    "dataveil": {
-      "command": "node",
-      "args": ["./dataveil-mcp-proxy/src/index.js", "--gateway"],
-      "env": {
-        "DATAVEIL_PROFILES_FILE": "./dataveil-profiles.json"
-      }
-    }
-  }
-}
-```
+   ```json
+   {
+     "connections": {
+       "my_database": {
+         "command": "/absolute/path/to/database-mcp-server",
+         "args": []
+       }
+     }
+   }
+   ```
 
-Define local stdio backend profiles without putting passwords in the file:
+   For a backend that has a `connect` MCP tool accepting `connection_name`, add `"connectTool": "connect"` to the profile to have the gateway call it with `my_database`. Otherwise connect through the backend's own tools after selecting the profile. The profile name and backend's saved connection name must match when using `connectTool`.
+3. Configure your MCP client to launch DataVeil (the included `.mcp.json` is an example). Replace `/absolute/path/to/dataveil` with your checkout location; absolute paths work regardless of the client's working directory:
+
+   ```json
+   {
+     "mcpServers": {
+       "dataveil": {
+         "command": "node",
+         "args": ["/absolute/path/to/dataveil/dataveil-mcp-proxy/src/index.js", "--gateway"],
+         "env": {
+           "DATAVEIL_PROFILES_FILE": "/absolute/path/to/dataveil/dataveil-profiles.json"
+         }
+       }
+     }
+   }
+   ```
+
+4. Restart the MCP client. Call `dataveil_connect` with `{ "name": "my_database" }`; then call `dataveil_status` to confirm `connected: true` and `protected: true`. The selected backend's tools become available through DataVeil. Use `dataveil_disconnect` before switching or ending the connection.
+
+The gateway defaults to `block`: when a sensitive value is detected in a tool result, the entire result is withheld. Set `DATAVEIL_PII_MODE=redact` in the MCP client's `env` to replace detected values in place instead. `DATAVEIL_ENABLED=false` explicitly disables protection; do not set it for protected use. The gateway now applies the same message-size limit, framing checks, and sanitization as direct proxy mode; invalid backend output disconnects that backend rather than forwarding it.
+
+### Oracle SQLcl gateway example
+
+If SQLcl already has a saved connection named `dataveil_ai`, a local profile can launch its MCP mode with that name:
 
 ```json
 {
   "connections": {
     "dataveil_ai": {
-      "command": "/path/to/database-mcp-server",
-      "connectTool": "connect",
-      "args": []
+      "command": "/absolute/path/to/sqlcl/bin/sql",
+      "args": ["-name", "dataveil_ai", "-mcp"]
     }
   }
 }
 ```
 
-The gateway exposes `dataveil_connect`, `dataveil_disconnect`, and `dataveil_status`. If `connectTool` is set, DataVeil calls that backend tool with the profile name (using `connection_name` by default). After calling `dataveil_connect` with `dataveil_ai`, backend tools are exposed through DataVeil and their results are sanitized. Gateway mode defaults to `block`; select `DATAVEIL_PII_MODE=redact` explicitly when in-place redaction is preferred. Protection is enabled by default; `DATAVEIL_ENABLED=false` is an explicit, visible opt-out.
+Select it using `dataveil_connect` with `{ "name": "dataveil_ai" }`. If SQLcl exposes its own `connect` tool and its database session is not yet connected, call that tool with the saved connection name before querying. Do not assume selecting a gateway profile alone establishes a database session.
 
 ## Oracle SQLcl compatibility
 

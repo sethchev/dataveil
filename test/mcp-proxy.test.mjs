@@ -103,7 +103,7 @@ test('connects to a named profile and proxies backend tools through the gateway'
   const profileDir = await mkdtemp(join(tmpdir(), 'dataveil-gateway-'));
   const profiles = join(profileDir, 'profiles.json');
   await writeFile(profiles, JSON.stringify({ connections: { fake: { command: process.execPath, args: [fakeServer], connectTool: 'connect' } } }));
-  const child = spawn(process.execPath, [proxy, '--gateway'], {
+  const child = spawn(process.execPath, [proxy, '--gateway', '--max-message-bytes', '1024'], {
     env: { ...process.env, DATAVEIL_PROFILES_FILE: profiles, DATAVEIL_PII_MODE: 'redact' },
     stdio: ['pipe', 'pipe', 'pipe']
   });
@@ -148,6 +148,13 @@ test('connects to a named profile and proxies backend tools through the gateway'
   const text = result.result.content[0].text;
   assert.equal(text.includes('alice@example.com'), false);
   assert.match(text, /REDACTED/);
+  send({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'query', arguments: { oversized: true } } });
+  const failure = await nextMessage();
+  assert.equal(failure.id, 7);
+  assert.equal(failure.result.isError, true);
+  assert.match(failure.result.content[0].text, /exceeded 1024 bytes/);
+  send({ jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'dataveil_status', arguments: {} } });
+  assert.equal((await nextMessage()).result.structuredContent.connected, false);
   child.stdin.end();
   await new Promise((resolve) => child.once('exit', resolve));
   await rm(profileDir, { recursive: true, force: true });

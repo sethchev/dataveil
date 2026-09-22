@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
-import { discoverCommand } from './proxy.js';
-import { sanitizeServerMessage, createStderrSanitizer } from './proxy.js';
+import { discoverCommand, sanitizeServerMessage, createStderrSanitizer, createLineProcessor } from './proxy.js';
 import { loadProfiles } from './profiles.js';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 const CONTROL_TOOLS = [
   {
     name: 'dataveil_connect',
@@ -30,30 +30,10 @@ function toolText(text, isError = false) {
   return { content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) };
 }
 
-function parseLineProcessor(onMessage, onError) {
-  let buffer = '';
-  return {
-    push(chunk) {
-      buffer += chunk.toString('utf8');
-      let newline;
-      while ((newline = buffer.indexOf('\n')) !== -1) {
-        const line = buffer.slice(0, newline).replace(/\r$/u, '');
-        buffer = buffer.slice(newline + 1);
-        if (!line.trim()) continue;
-        try { onMessage(JSON.parse(line)); }
-        catch { onError(new Error('MCP backend emitted non-JSON data')); }
-      }
-    },
-    end() {
-      if (buffer.trim()) onError(new Error('MCP backend ended with an incomplete JSON message'));
-      buffer = '';
-    }
-  };
-}
-
 export function runGateway(options = {}) {
   const mode = options.mode ?? 'redact';
   const timeoutMs = options.backendTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const maxBytes = options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES;
   const enabled = !['0', 'false', 'off', 'no'].includes(String((options.env ?? process.env).DATAVEIL_ENABLED ?? 'true').toLowerCase());
   const profileState = loadProfiles(options.env ?? process.env);
   process.stderr.write(`[dataveil] gateway managed=true enabled=${enabled} policy=${enabled ? mode : 'disabled'} timeout_ms=${timeoutMs}\n`);
@@ -77,12 +57,12 @@ export function runGateway(options = {}) {
     pendingBackend.clear();
   };
 
-  const closeBackend = async () => {
+  const closeBackend = async (reason = new Error('MCP backend disconnected')) => {
     const child = backend;
     backend = null;
     activeProfile = null;
     backendToolMap = new Map();
-    clearPending(new Error('MCP backend disconnected'));
+    clearPending(reason);
     if (!child) return;
     if (!child.killed) child.kill('SIGTERM');
     await new Promise((resolve) => {
@@ -123,12 +103,16 @@ export function runGateway(options = {}) {
     }
   };
 
+  const failBackend = (error) => {
+    process.stderr.write(`[dataveil] ${safeError(error)}\n`);
+    void closeBackend(error);
+  };
+
   const sendBackendRequest = (method, params = {}) => new Promise((resolve, reject) => {
     if (!backend || !backend.stdin.writable) return reject(new Error('No database MCP backend is connected'));
     const id = `dataveil-${++backendRequestId}`;
     const timer = setTimeout(() => {
-      pendingBackend.delete(String(id));
-      reject(new Error(`MCP backend did not respond within ${timeoutMs} ms`));
+      failBackend(new Error(`MCP backend did not respond within ${timeoutMs} ms`));
     }, timeoutMs);
     pendingBackend.set(String(id), { resolve, reject, timer });
     backend.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
@@ -144,7 +128,7 @@ export function runGateway(options = {}) {
       stdio: ['pipe', 'pipe', 'pipe']
     });
     backend = child;
-    const processor = parseLineProcessor(onBackendMessage, (error) => clearPending(error));
+    const processor = createLineProcessor({ maxBytes, onMessage: onBackendMessage, onError: failBackend });
     child.stdout.on('data', (chunk) => processor.push(chunk));
     child.stdout.on('end', () => processor.end());
     child.stderr.on('data', (chunk) => stderr.push(chunk));
@@ -215,9 +199,7 @@ export function runGateway(options = {}) {
     try {
       const backendId = `dataveil-call-${++backendRequestId}`;
       const timer = setTimeout(() => {
-        const pending = pendingBackend.get(String(backendId));
-        pendingBackend.delete(String(backendId));
-        pending?.reject(new Error(`MCP backend did not respond within ${timeoutMs} ms`));
+        failBackend(new Error(`MCP backend did not respond within ${timeoutMs} ms`));
       }, timeoutMs);
       const responsePromise = new Promise((resolve, reject) => pendingBackend.set(String(backendId), { resolve, reject, timer }));
       backend.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: backendId, method: 'tools/call', params: { name, arguments: args ?? {} } })}\n`);
@@ -253,9 +235,16 @@ export function runGateway(options = {}) {
     if (message.id !== undefined) writeClient({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: `Unsupported MCP method: ${message.method}` } });
   };
 
-  const clientProcessor = parseLineProcessor((message) => { void onClientMessage(message); }, (error) => {
-    process.stderr.write(`[dataveil] ${safeError(error)}\n`);
-    shuttingDown = true;
+  const clientProcessor = createLineProcessor({
+    maxBytes,
+    onMessage: (message) => { if (!shuttingDown) void onClientMessage(message); },
+    onError: (error) => {
+      process.stderr.write(`[dataveil] ${safeError(error)}\n`);
+      shuttingDown = true;
+      process.exitCode = 1;
+      process.stdin.pause();
+      void closeBackend(error);
+    }
   });
   process.stdin.on('data', (chunk) => clientProcessor.push(chunk));
   process.stdin.on('end', async () => { clientProcessor.end(); shuttingDown = true; await closeBackend(); });

@@ -156,14 +156,21 @@ export function sanitizeServerMessage(message, context = {}) {
   };
 }
 
-function createLineProcessor({ maxBytes, onMessage, onError }) {
+export function createLineProcessor({ maxBytes, onMessage, onError }) {
   let buffer = Buffer.alloc(0);
+  let failed = false;
+  const fail = (error) => {
+    if (failed) return;
+    failed = true;
+    buffer = Buffer.alloc(0);
+    onError(error);
+  };
   return {
     push(chunk) {
+      if (failed) return;
       buffer = Buffer.concat([buffer, chunk]);
       if (buffer.length > maxBytes && buffer.indexOf(10) === -1) {
-        onError(new Error(`MCP message exceeded ${maxBytes} bytes`));
-        buffer = Buffer.alloc(0);
+        fail(new Error(`MCP message exceeded ${maxBytes} bytes`));
         return;
       }
       let newline;
@@ -172,19 +179,23 @@ function createLineProcessor({ maxBytes, onMessage, onError }) {
         buffer = buffer.subarray(newline + 1);
         if (!line.trim()) continue;
         if (Buffer.byteLength(line) > maxBytes) {
-          onError(new Error(`MCP message exceeded ${maxBytes} bytes`));
-          continue;
+          fail(new Error(`MCP message exceeded ${maxBytes} bytes`));
+          return;
         }
+        let message;
         try {
-          onMessage(JSON.parse(line));
+          message = JSON.parse(line);
         } catch {
-          onError(new Error('MCP backend emitted non-JSON data on stdout; refusing to forward it'));
+          fail(new Error('MCP peer emitted non-JSON data on stdout; refusing to forward it'));
+          return;
         }
+        onMessage(message);
+        if (failed) return;
       }
     },
     end() {
-      if (buffer.toString('utf8').trim()) {
-        onError(new Error('MCP backend stdout ended with an incomplete JSON message'));
+      if (!failed && buffer.toString('utf8').trim()) {
+        fail(new Error('MCP peer stdout ended with an incomplete JSON message'));
       }
     }
   };

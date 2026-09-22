@@ -27,6 +27,10 @@ lines.on('line', (line) => {
     return;
   }
   if (request.method === 'tools/call') {
+    if (request.params?.arguments?.oversized) {
+      process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: 'x'.repeat(2048) }] } })}\n`);
+      return;
+    }
     process.stdout.write(`${JSON.stringify({
       jsonrpc: '2.0', id: request.id,
       result: {
