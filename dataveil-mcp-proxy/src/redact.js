@@ -152,9 +152,66 @@ function redactSensitiveCsv(text, sensitiveColumns = DEFAULT_SENSITIVE_COLUMNS) 
   };
 }
 
+function findJsonSpan(input) {
+  for (let start = 0; start < input.length; start += 1) {
+    if (input[start] !== '{' && input[start] !== '[') continue;
+    const stack = [input[start] === '{' ? '}' : ']'];
+    let quoted = false;
+    let escaped = false;
+    for (let index = start + 1; index < input.length; index += 1) {
+      const character = input[index];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (character === '\\') escaped = true;
+        else if (character === '"') quoted = false;
+        continue;
+      }
+      if (character === '"') {
+        quoted = true;
+      } else if (character === '{') {
+        stack.push('}');
+      } else if (character === '[') {
+        stack.push(']');
+      } else if (character === '}' || character === ']') {
+        if (stack.pop() !== character) break;
+        if (stack.length === 0) return { start, end: index + 1 };
+      }
+    }
+  }
+  return null;
+}
+
+function redactEmbeddedJson(input, options) {
+  const span = findJsonSpan(input);
+  if (!span) return null;
+  const candidate = input.slice(span.start, span.end);
+
+  try {
+    const parsed = JSON.parse(candidate);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const sanitized = sanitizeValue(parsed, options);
+    return {
+      value: `${input.slice(0, span.start)}${JSON.stringify(sanitized.value)}${input.slice(span.end)}`,
+      matches: sanitized.matches,
+      categories: new Set(['embedded-json', ...sanitized.categories])
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function redactSensitiveText(input, options = {}) {
   if (typeof input !== 'string' || input.length === 0) {
     return { value: input, matches: 0, categories: [] };
+  }
+
+  const embedded = redactEmbeddedJson(input, options);
+  if (embedded) {
+    return {
+      value: embedded.value,
+      matches: embedded.matches,
+      categories: [...embedded.categories]
+    };
   }
 
   const csv = redactSensitiveCsv(input, options.sensitiveColumns ?? DEFAULT_SENSITIVE_COLUMNS);

@@ -5,10 +5,11 @@
   "description": "Database-agnostic privacy proxy for stdio MCP servers",
   "type": "module",
   "bin": {
-    "dataveil-mcp-proxy": "src/index.js"
+    "dataveil-mcp-proxy": "src/index.js",
+    "dataveil-gateway": "src/index.js"
   },
   "scripts": {
-    "build": "node --check src/index.js && node --check src/proxy.js && node --check src/redact.js",
+    "build": "node --check src/index.js && node --check src/proxy.js && node --check src/redact.js && node --check src/gateway.js && node --check src/profiles.js",
     "test": "node --test ../../test/mcp-proxy.test.mjs"
   },
   "engines": {

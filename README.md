@@ -52,7 +52,7 @@ Default behavior is in-place redaction. For stricter environments, block mode wi
 
 ## MCP-only scope
 
-DataVeil only controls data returned through MCP. It is intentionally database-agnostic and does not parse database protocols directly.
+DataVeil only controls data returned through MCP. It is intentionally database-agnostic and does not parse database protocols directly. The proxy fails closed on malformed or oversized MCP output and terminates a backend that does not respond within the configured timeout.
 
 It does not manage direct, non-MCP database access paths, and it is not a replacement for backend permissions or least-privilege database accounts. Its job is to sanitize MCP tool results before an AI agent receives them.
 
@@ -123,6 +123,40 @@ Keep database credentials in the backend MCP server's normal local configuration
 
 After restarting the MCP client, the backend MCP tools are available through DataVeil.
 
+## DataVeil gateway mode
+
+For a single protected MCP entry that can select named database backends at runtime, register the gateway:
+
+```json
+{
+  "mcpServers": {
+    "dataveil": {
+      "command": "node",
+      "args": ["./dataveil-mcp-proxy/src/index.js", "--gateway"],
+      "env": {
+        "DATAVEIL_PROFILES_FILE": "./dataveil-profiles.json"
+      }
+    }
+  }
+}
+```
+
+Define local stdio backend profiles without putting passwords in the file:
+
+```json
+{
+  "connections": {
+    "dataveil_ai": {
+      "command": "/path/to/database-mcp-server",
+      "connectTool": "connect",
+      "args": []
+    }
+  }
+}
+```
+
+The gateway exposes `dataveil_connect`, `dataveil_disconnect`, and `dataveil_status`. If `connectTool` is set, DataVeil calls that backend tool with the profile name (using `connection_name` by default). After calling `dataveil_connect` with `dataveil_ai`, backend tools are exposed through DataVeil and their results are sanitized. Gateway mode defaults to `block`; select `DATAVEIL_PII_MODE=redact` explicitly when in-place redaction is preferred. Protection is enabled by default; `DATAVEIL_ENABLED=false` is an explicit, visible opt-out.
+
 ## Oracle SQLcl compatibility
 
 SQLcl remains supported as one backend example. For backward compatibility, DataVeil still accepts:
@@ -180,6 +214,8 @@ Options:
   --arg ARG                 Backend argument; repeat as needed
   --mode redact|block       Redact fields or block sensitive tool results
   --max-message-bytes N     Maximum MCP JSON message size (default: 16777216)
+  --backend-timeout-ms N    Backend response timeout (default: 120000)
+  --gateway                 Run the DataVeil MCP gateway
   --help                    Show help
 
 Backward-compatible Oracle SQLcl options:
@@ -194,7 +230,7 @@ npm run build
 npm test
 ```
 
-The test suite uses a fake generic MCP backend and verifies proxy behavior, JSON-RPC forwarding, redaction, block mode plumbing, stderr sanitization, and fail-closed configuration validation.
+The test suite uses a fake generic MCP backend and verifies proxy behavior, gateway connection and tool forwarding, JSON-RPC forwarding, redaction, block mode plumbing, stderr sanitization, and fail-closed configuration validation.
 
 ## License
 

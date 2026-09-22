@@ -55,7 +55,8 @@ Generic backend example:
         "server-specific-argument"
       ],
       "env": {
-        "DATAVEIL_PII_MODE": "redact"
+        "DATAVEIL_PII_MODE": "redact",
+        "DATAVEIL_BACKEND_TIMEOUT_MS": "120000"
       }
     }
   }
@@ -64,7 +65,41 @@ Generic backend example:
 
 Restart your MCP client after changing configuration. The backend MCP tools are exposed normally, with sensitive `tools/call` results redacted locally by DataVeil.
 
-## 5. Oracle SQLcl compatibility
+## 5. Use the DataVeil gateway
+
+Register the gateway once in the MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "dataveil": {
+      "command": "node",
+      "args": ["./dataveil-mcp-proxy/src/index.js", "--gateway"],
+      "env": {
+        "DATAVEIL_PROFILES_FILE": "./dataveil-profiles.json"
+      }
+    }
+  }
+}
+```
+
+Create profiles that reference local stdio database MCP backends. Keep credentials in the backend’s normal secret store or environment:
+
+```json
+{
+  "connections": {
+    "dataveil_ai": {
+      "command": "/path/to/database-mcp-server",
+      "connectTool": "connect",
+      "args": []
+    }
+  }
+}
+```
+
+Use the gateway’s `dataveil_connect`, `dataveil_disconnect`, and `dataveil_status` tools. If `connectTool` is configured, DataVeil calls it with the profile name using the `connection_name` argument by default. Gateway mode defaults to block mode and exposes backend tools only after a named profile is connected.
+
+## 6. Oracle SQLcl compatibility
 
 SQLcl remains supported as a backend example. You can configure it with the generic `--command` option:
 
@@ -76,7 +111,7 @@ node ./dataveil-mcp-proxy/src/index.js \
 
 For backward compatibility, DataVeil also accepts `DATAVEIL_SQLCL`, `SECURE_ORACLE_SQLCL`, `--sqlcl`, and `--sqlcl-arg`. If no backend arguments are provided and SQLcl is discovered through this compatibility path, DataVeil adds `-mcp` automatically.
 
-## 6. Choose redaction behavior
+## 7. Choose redaction behavior
 
 Redact values in-place:
 
@@ -92,4 +127,4 @@ DATAVEIL_PII_MODE=block node ./dataveil-mcp-proxy/src/index.js --command /path/t
 
 ## Important scope note
 
-DataVeil is MCP-only. It protects data returned through MCP tool results and does not manage direct, non-MCP database access paths.
+DataVeil is MCP-only. It protects data returned through MCP tool results and does not manage direct, non-MCP database access paths. The proxy fails closed on malformed or oversized MCP output and terminates a backend that does not respond within the configured timeout.

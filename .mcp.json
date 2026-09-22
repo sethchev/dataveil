@@ -1,13 +1,14 @@
 {
   "mcpServers": {
-    "oracle": {
+    "dataveil": {
       "command": "node",
       "args": [
-        "./dataveil-mcp-proxy/src/index.js"
+        "./dataveil-mcp-proxy/src/index.js",
+        "--gateway"
       ],
       "env": {
-        "DATAVEIL_PII_MODE": "redact",
-        "DATAVEIL_SQLCL": "/path/to/sqlcl/bin/sql"
+        "DATAVEIL_PROFILES_FILE": "./dataveil-profiles.json",
+        "DATAVEIL_PII_MODE": "block"
       }
     }
   }

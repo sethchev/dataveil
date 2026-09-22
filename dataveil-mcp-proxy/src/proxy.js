@@ -1,20 +1,35 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { accessSync, constants as fsConstants, existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { sanitizeValue, redactSensitiveText } from './redact.js';
 
 const DEFAULT_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
+const DEFAULT_BACKEND_TIMEOUT_MS = 120_000;
 const STDERR_LIMIT_BYTES = 1024 * 1024;
 
-function executableOnPath(command) {
-  if (command.includes('/') && existsSync(command)) return command;
-  for (const directory of (process.env.PATH ?? '').split(delimiter)) {
+function isExecutable(path) {
+  try {
+    accessSync(path, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function executableOnPath(command, env = process.env) {
+  if (command.includes('/') && isExecutable(command)) return command;
+  for (const directory of (env.PATH ?? '').split(delimiter)) {
     if (!directory) continue;
     const candidate = join(directory, command);
-    if (existsSync(candidate)) return candidate;
+    if (isExecutable(candidate)) return candidate;
   }
   return null;
+}
+
+function resolveCommand(candidate, env = process.env) {
+  if (typeof candidate !== 'string' || candidate.length === 0) return null;
+  return candidate.includes('/') ? (isExecutable(candidate) ? candidate : null) : executableOnPath(candidate, env);
 }
 
 function downloadedSqlcl() {
@@ -29,18 +44,18 @@ function downloadedSqlcl() {
 }
 
 export function discoverCommand(explicitPath, env = process.env) {
+  if (explicitPath !== undefined && explicitPath !== null) return resolveCommand(explicitPath, env);
+  if (env.DATAVEIL_COMMAND !== undefined) return resolveCommand(env.DATAVEIL_COMMAND, env);
   return [
-    explicitPath,
-    env.DATAVEIL_COMMAND,
     env.DATAVEIL_SQLCL,
     env.SECURE_ORACLE_SQLCL,
-    executableOnPath('sql'),
+    executableOnPath('sql', env),
     downloadedSqlcl()
-  ].find((candidate) => typeof candidate === 'string' && candidate.length > 0) ?? null;
+  ].map((candidate) => resolveCommand(candidate, env)).find((candidate) => candidate !== null) ?? null;
 }
 
 function usesSqlclDefault(command, env = process.env) {
-  return !command && !env.DATAVEIL_COMMAND && (env.DATAVEIL_SQLCL || env.SECURE_ORACLE_SQLCL || executableOnPath('sql') || downloadedSqlcl());
+  return !command && !env.DATAVEIL_COMMAND && (env.DATAVEIL_SQLCL || env.SECURE_ORACLE_SQLCL || executableOnPath('sql', env) || downloadedSqlcl());
 }
 
 // Backward-compatible Oracle-specific name.
@@ -51,11 +66,15 @@ export function parseArguments(argv, env = process.env) {
   const options = {
     command: null,
     commandArgs: [],
+    gateway: false,
     sqlclCompatibility: false,
     mode: configuredMode,
     maxMessageBytes: env.DATAVEIL_MAX_MESSAGE_BYTES === undefined
       ? DEFAULT_MAX_MESSAGE_BYTES
-      : Number(env.DATAVEIL_MAX_MESSAGE_BYTES)
+      : Number(env.DATAVEIL_MAX_MESSAGE_BYTES),
+    backendTimeoutMs: env.DATAVEIL_BACKEND_TIMEOUT_MS === undefined
+      ? DEFAULT_BACKEND_TIMEOUT_MS
+      : Number(env.DATAVEIL_BACKEND_TIMEOUT_MS)
   };
   const nextValue = (index, argument) => {
     const value = argv[index + 1];
@@ -76,15 +95,21 @@ export function parseArguments(argv, env = process.env) {
     }
     else if (argument === '--mode') options.mode = nextValue(index++, argument);
     else if (argument === '--max-message-bytes') options.maxMessageBytes = Number(nextValue(index++, argument));
+    else if (argument === '--backend-timeout-ms') options.backendTimeoutMs = Number(nextValue(index++, argument));
+    else if (argument === '--gateway') options.gateway = true;
     else if (argument === '--help') options.help = true;
     else throw new Error(`Unknown argument: ${argument}`);
   }
 
+  if (options.gateway && env.DATAVEIL_PII_MODE === undefined && !argv.includes('--mode')) options.mode = 'block';
   if (!['redact', 'block'].includes(options.mode)) {
     throw new Error('PII mode must be "redact" or "block"');
   }
   if (!Number.isSafeInteger(options.maxMessageBytes) || options.maxMessageBytes < 1024) {
     throw new Error('--max-message-bytes must be an integer of at least 1024');
+  }
+  if (!Number.isSafeInteger(options.backendTimeoutMs) || options.backendTimeoutMs < 100) {
+    throw new Error('--backend-timeout-ms must be an integer of at least 100');
   }
   if (options.commandArgs.length === 0 && (options.sqlclCompatibility || usesSqlclDefault(options.command, env))) options.commandArgs.push('-mcp');
   return options;
@@ -92,6 +117,13 @@ export function parseArguments(argv, env = process.env) {
 
 function requestKey(id) {
   return `${typeof id}:${JSON.stringify(id)}`;
+}
+
+function pendingMethod(pendingRequests, id) {
+  const pending = pendingRequests?.get(requestKey(id));
+  if (Array.isArray(pending)) return pending[0]?.method;
+  if (typeof pending === 'string') return pending;
+  return pending?.method;
 }
 
 function blockedToolResult(categories) {
@@ -107,7 +139,7 @@ function blockedToolResult(categories) {
 export function sanitizeServerMessage(message, context = {}) {
   if (!message || typeof message !== 'object') return { value: message, matches: 0, categories: [] };
   const isResponse = message.id !== undefined && message.method === undefined;
-  const method = isResponse ? context.pendingRequests?.get(requestKey(message.id)) : undefined;
+  const method = isResponse ? pendingMethod(context.pendingRequests, message.id) : undefined;
   if (method !== 'tools/call') return { value: message, matches: 0, categories: [] };
 
   const payloadKey = Object.hasOwn(message, 'result') ? 'result' : Object.hasOwn(message, 'error') ? 'error' : null;
@@ -190,7 +222,7 @@ export function createStderrSanitizer(write) {
 
 export function runProxy(options) {
   const command = discoverCommand(options.command);
-  if (!command) throw new Error('Could not find the MCP backend command. Set DATAVEIL_COMMAND or pass --command /path/to/backend.');
+  if (!command) throw new Error('Could not find an executable MCP backend command. Set DATAVEIL_COMMAND or pass --command /path/to/backend.');
 
   const child = spawn(command, options.commandArgs, { env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
   const pendingRequests = new Map();
@@ -202,9 +234,30 @@ export function runProxy(options) {
     process.stdin.removeListener('data', onClientData);
     process.stdin.removeListener('end', onClientEnd);
   };
+  const clearPendingRequests = () => {
+    for (const entries of pendingRequests.values()) {
+      for (const entry of Array.isArray(entries) ? entries : [entries]) {
+        if (entry?.timer) clearTimeout(entry.timer);
+      }
+    }
+    pendingRequests.clear();
+  };
+  const removePendingRequest = (id) => {
+    const key = requestKey(id);
+    const entries = pendingRequests.get(key);
+    if (!entries) return;
+    if (!Array.isArray(entries)) {
+      pendingRequests.delete(key);
+      return;
+    }
+    const entry = entries.shift();
+    if (entry?.timer) clearTimeout(entry.timer);
+    if (entries.length === 0) pendingRequests.delete(key);
+  };
   const terminate = (signal = 'SIGTERM') => {
     if (shuttingDown) return;
     shuttingDown = true;
+    clearPendingRequests();
     stopInput();
     if (!child.killed) child.kill(signal);
     killTimer = setTimeout(() => {
@@ -223,7 +276,14 @@ export function runProxy(options) {
     onError: failClosed,
     onMessage(message) {
       if (message && message.id !== undefined && typeof message.method === 'string') {
-        pendingRequests.set(requestKey(message.id), message.method);
+        const key = requestKey(message.id);
+        const entries = pendingRequests.get(key) ?? [];
+        const entry = { method: message.method };
+        entry.timer = setTimeout(() => {
+          failClosed(new Error(`MCP backend did not respond within ${options.backendTimeoutMs} ms`));
+        }, options.backendTimeoutMs);
+        entries.push(entry);
+        pendingRequests.set(key, entries);
       }
       if (!child.stdin.write(`${JSON.stringify(message)}\n`)) {
         process.stdin.pause();
@@ -245,7 +305,7 @@ export function runProxy(options) {
         process.stdout.once('drain', () => { if (!shuttingDown) child.stdout.resume(); });
       }
       if (message && message.id !== undefined && message.method === undefined) {
-        pendingRequests.delete(requestKey(message.id));
+        removePendingRequest(message.id);
       }
     }
   });
@@ -270,11 +330,17 @@ export function runProxy(options) {
   child.on('error', failClosed);
   child.on('exit', (code, signal) => {
     if (killTimer) clearTimeout(killTimer);
+    const hadPendingRequests = pendingRequests.size > 0;
+    clearPendingRequests();
     stopInput();
+    if (hadPendingRequests && !shuttingDown) {
+      process.stderr.write('[dataveil] MCP backend exited before responding to all requests\n');
+      process.exitCode = 1;
+    }
     if (code && !shuttingDown) {
       process.stderr.write(`[dataveil] MCP backend exited with code ${code}${signal ? ` (${signal})` : ''}\n`);
     }
-    process.exitCode = code ?? (signal && !shuttingDown ? 1 : 0);
+    process.exitCode ??= code ?? (signal && !shuttingDown ? 1 : 0);
   });
 
   for (const signal of ['SIGINT', 'SIGTERM']) {
@@ -284,4 +350,4 @@ export function runProxy(options) {
   return child;
 }
 
-export const constants = { DEFAULT_MAX_MESSAGE_BYTES };
+export const constants = { DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_BACKEND_TIMEOUT_MS };
