@@ -37,9 +37,9 @@ node ./dataveil-mcp-proxy/src/index.js status --harness generic --config /absolu
 
 After local tarball installation use `dataveil` in place of `node ./dataveil-mcp-proxy/src/index.js`.
 
-Setup detects the harness from inherited session/terminal markers when available, then asks you to confirm or choose another harness. It then prompts for destination, backend executable and JSON arguments, privacy mode, and MCP entry name. SQLcl can use a separately named saved connection; manual names may include spaces or punctuation. Codex session markers identify Codex; Cursor, Windsurf and VS Code terminal markers identify the editor. Pi supplies its harness context through the extension. If the caller cannot be identified, setup asks you to choose. An explicit `--harness` selects the candidate and still prompts for confirmation. Only the inherited PATH is searched, with `sql` and `sqlcl` discovery. Custom stdio MCP backends are always available. **Raw `psql`, `sqlite3`, `mysql`, and `mariadb` are database clients, not MCP servers.** Use a separate MCP backend for those databases.
+Setup detects the harness from inherited session/terminal markers when available, then asks you to confirm or choose another harness. It then prompts for destination, backend executable and JSON arguments, privacy mode, and MCP entry name. SQLcl can use a separately named saved connection; manual names may include spaces or punctuation. Codex session markers identify Codex; OpenCode sets `OPENCODE=1` and `OPENCODE_PID`, which identify OpenCode before editor markers; Cursor, Windsurf and VS Code terminal markers identify the editor. Pi supplies its harness context through the extension. If the caller cannot be identified, setup asks you to choose. An explicit `--harness` selects the candidate and still prompts for confirmation. Only the inherited PATH is searched, with `sql` and `sqlcl` discovery. Custom stdio MCP backends are always available. **Raw `psql`, `sqlite3`, `mysql`, and `mariadb` are database clients, not MCP servers.** Use a separate MCP backend for those databases.
 
-Cancel any prompt to exit without saving. Existing files must contain valid TOML for Codex, or strict JSON with the correct schema for other harnesses; JSONC is refused. Codex TOML is reserialized: setting values and unrelated MCP entries are preserved, while comments and formatting are normalized. The backup retains the exact original source. Unrelated settings are preserved. Replacing a duplicate name requires explicit confirmation. Writes are atomic and existing files receive a unique `.bak-…` backup; file and backup permissions are restricted to the owner on POSIX systems. Setup requires an interactive terminal and does not configure defaults from piped input.
+Cancel any prompt to exit without saving. Existing files must contain valid TOML for Codex, JSON/JSONC for OpenCode, or strict JSON with the correct schema for other harnesses. OpenCode comments and unrelated settings are preserved through targeted entry edits. JSONC is refused for other JSON adapters. Codex TOML is reserialized: setting values and unrelated MCP entries are preserved, while comments and formatting are normalized. The backup retains the exact original source. Unrelated settings are preserved. Replacing a duplicate name requires explicit confirmation. Writes are atomic and existing files receive a unique `.bak-…` backup; file and backup permissions are restricted to the owner on POSIX systems. Setup requires an interactive terminal and does not configure defaults from piped input.
 
 Generated launchers use the resolved Node executable and absolute proxy/shared settings paths. Keep that Node installation and checkout or installed package available. Backend arguments should use absolute paths if the backend needs local files. Keep passwords in backend credential stores or inherited environment variables; never paste secrets into chat or the wizard's argument prompt. The wizard does not collect credentials.
 
@@ -101,6 +101,7 @@ These adapters generate stdio entries. Config-file support does not establish th
 | `--harness` | Destination | Root field |
 | --- | --- | --- |
 | `codex` | Choose global `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`) or project `.codex/config.toml` | TOML `mcp_servers` |
+| `opencode` | Choose global `~/.config/opencode/opencode.json` / `opencode.jsonc` (respects `XDG_CONFIG_HOME`), project `opencode.json` / `opencode.jsonc`, or inherited `OPENCODE_CONFIG` path | `mcp`, entry `type: "local"`, `command` array |
 | `claude-desktop` | macOS `~/Library/Application Support/Claude/claude_desktop_config.json`; Windows `%APPDATA%/Claude/claude_desktop_config.json`; explicit path elsewhere | `mcpServers` |
 | `cursor` | Choose global `~/.cursor/mcp.json` or project `.cursor/mcp.json` | `mcpServers` |
 | `windsurf` | Existing legacy `~/.codeium/windsurf/mcp_config.json`, or explicit path opened in the application's MCP UI | `mcpServers` |
@@ -111,7 +112,7 @@ These adapters generate stdio entries. Config-file support does not establish th
 
 `--config FILE` overrides the native harness destination; `--settings FILE` selects the shared DataVeil settings file. Otherwise setup prompts for scope/path instead of inferring scope from existing files. Cline never defaults to VS Code's native file.
 
-References: [Codex CLI](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [Claude Desktop](https://modelcontextprotocol.io/docs/develop/connect-local-servers), [Cursor](https://prod.cursor.com/help/customization/mcp), [VS Code](https://code.visualstudio.com/docs/agent-customization/mcp-servers), [Cline](https://docs.cline.bot/mcp/mcp-overview). Pi's installed 0.99.1 `docs/mcp.md`, `docs/extensions.md`, and `docs/packages.md` document its paths and extension APIs.
+References: [OpenCode configuration](https://opencode.ai/docs/config/), [OpenCode MCP](https://opencode.ai/docs/mcp-servers/), [OpenCode session markers](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/index.ts), [Codex CLI](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [Claude Desktop](https://modelcontextprotocol.io/docs/develop/connect-local-servers), [Cursor](https://prod.cursor.com/help/customization/mcp), [VS Code](https://code.visualstudio.com/docs/agent-customization/mcp-servers), [Cline](https://docs.cline.bot/mcp/mcp-overview). Pi's installed 0.99.1 `docs/mcp.md`, `docs/extensions.md`, and `docs/packages.md` document its paths and extension APIs.
 
 The [former Windsurf documentation](https://docs.windsurf.com/windsurf/cascade/mcp) now redirects to Devin Desktop, whose Cascade configuration uses different paths. This adapter deliberately requires an explicit path when the legacy file does not exist; it does not claim Devin Local support.
 
@@ -148,7 +149,7 @@ DATAVEIL_PII_MODE = "redact"
 
 From a checkout, run `node ./dataveil-mcp-proxy/src/index.js setup` and confirm the detected harness or select **Codex CLI**, or pass `setup --harness codex` and confirm it. Choose global or project scope; `--config /absolute/path/to/config.toml` overrides both. Project config follows Codex's project-trust rules. Run `codex mcp get database --json` to inspect the generated entry, then restart Codex and use `/mcp` to inspect the runtime connection. CLI acceptance of the config is tested; a real Codex tool call is still not claimed by that check.
 
-The wizard's shared launcher uses `args = ["/absolute/path/to/dataveil/dataveil-mcp-proxy/src/index.js", "--connection", "database", "--settings", "/absolute/path/to/dataveil/config.json"]` in Codex TOML, or the same string array under `args` in JSON clients. Backend executable, backend arguments and default mode are held in the shared file above.
+The wizard's shared launcher uses `args = ["/absolute/path/to/dataveil/dataveil-mcp-proxy/src/index.js", "--connection", "database", "--settings", "/absolute/path/to/dataveil/config.json"]` in Codex TOML, the same string array under `args` in other JSON clients, or appended to the executable in OpenCode’s `command` array. Backend executable, backend arguments and default mode are held in the shared file above.
 
 VS Code's `.vscode/mcp.json` instead uses:
 
@@ -212,3 +213,26 @@ Redaction is heuristic: unknown sensitive fields may be missed and harmless valu
 Malformed, oversized, or incomplete MCP output fails closed. Backend response timeout defaults to 120000 ms and message-size limit to 16 MiB. Inspect `dataveil --help` for proxy and SQLcl compatibility options.
 
 No license has been granted. Package metadata is `UNLICENSED`; all rights reserved. No registry publication or license change is part of this implementation.
+
+### OpenCode
+
+Run `dataveil setup --harness opencode` and confirm OpenCode, or run setup from an OpenCode shell session and confirm the detected harness. Select global/project JSON or JSONC, or use `--config /absolute/path/to/opencode.jsonc`. Reuse an existing shared connection to keep the same backend and policy across harnesses. The native registration is:
+
+```json
+{
+  "mcp": {
+    "database": {
+      "type": "local",
+      "command": [
+        "/absolute/path/to/node",
+        "/absolute/path/to/dataveil/dataveil-mcp-proxy/src/index.js",
+        "--connection", "database",
+        "--settings", "/absolute/path/to/dataveil/config.json"
+      ],
+      "enabled": true
+    }
+  }
+}
+```
+
+Run `opencode mcp list` to inspect the connection. The isolated installed-CLI smoke test connects to a synthetic backend; it does not establish a real database tool call through the OpenCode UI.

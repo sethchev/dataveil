@@ -44,15 +44,17 @@ npm install -g ./dataveil-mcp-proxy-0.1.0.tgz
 dataveil setup --harness generic --config /absolute/path/to/mcp.json
 ```
 
-Config adapters cover Codex CLI, Claude Desktop, Cursor, legacy Windsurf, VS Code, Cline, Pi, and generic clients. Cline and unverified platform locations require explicit paths. Codex uses TOML `mcp_servers`; VS Code uses JSON `servers`; the other adapters use JSON `mcpServers`. Adapter tests do not prove real harness UI integration.
+Config adapters cover Codex CLI, OpenCode, Claude Desktop, Cursor, legacy Windsurf, VS Code, Cline, Pi, and generic clients. Cline and unverified platform locations require explicit paths. Codex uses TOML `mcp_servers`; VS Code uses JSON `servers`; OpenCode uses JSON/JSONC `mcp` with a command array; the other adapters use JSON `mcpServers`. Adapter tests do not prove real harness UI integration.
 
 For Codex, run setup and confirm Codex when detected, or use `setup --harness codex` and confirm it. The wizard handles global/project `config.toml`, respects `CODEX_HOME`, and preserves existing settings with a backup.
 
 See [installation and per-harness configuration](docs/install.md) for exact paths, manual examples, vendor references, local package use, and future registry commands.
 
+For OpenCode, use `dataveil setup --harness opencode`. Setup detects inherited `OPENCODE`/`OPENCODE_PID` session markers and asks for confirmation. Choose global or project `opencode.json`/`opencode.jsonc`, or an inherited `OPENCODE_CONFIG` path. Existing comments and unrelated entries are preserved.
+
 ## Supported harnesses and databases
 
-Setup adapters support **Codex CLI, Claude Desktop, Cursor, legacy Windsurf, VS Code, Cline, Pi, and generic stdio MCP clients**. Cline requires an explicit config path; legacy Windsurf requires an existing legacy file or an explicit path. Config adapters are tested; real desktop UI integration is still pending.
+Setup adapters support **Codex CLI, OpenCode, Claude Desktop, Cursor, legacy Windsurf, VS Code, Cline, Pi, and generic stdio MCP clients**. Cline requires an explicit config path; legacy Windsurf requires an existing legacy file or an explicit path. Config adapters are tested; real desktop UI integration is still pending.
 
 Database support comes from the backend MCP server. The SQLcl setup helper supports **Oracle SQLcl's MCP mode**. **PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, and other engines** can be used through a separately supplied compatible stdio MCP backend. These are protocol-level compatibility examples, not claims that each database/backend has been tested here. Raw database clients and direct database protocols are unsupported.
 

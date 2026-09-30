@@ -16,7 +16,7 @@ Usage: dataveil [proxy options]
        dataveil status [--harness NAME] [--config FILE] [--settings FILE]
 
 Setup is interactive. --config overrides the prompted destination.
-Harnesses: codex, claude-desktop, cursor, windsurf, vscode, cline, pi, generic.
+Harnesses: opencode, codex, claude-desktop, cursor, windsurf, vscode, cline, pi, generic.
 The dataveil-gateway executable defaults to gateway mode.
 
 Options:

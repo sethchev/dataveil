@@ -36,7 +36,7 @@ test('detects harness environment and requires confirmation before any file prom
   for (const [env, expected] of [
     [{ CODEX_THREAD_ID: 'synthetic' }, 'codex'], [{ TERM_PROGRAM: 'cursor' }, 'cursor'],
     [{ TERM_PROGRAM: 'windsurf' }, 'windsurf'], [{ TERM_PROGRAM: 'vscode' }, 'vscode'],
-    [{ VSCODE_PID: '123' }, 'vscode'], [{ CODEX_THREAD_ID: 'synthetic', TERM_PROGRAM: 'vscode' }, 'codex'],
+    [{ VSCODE_PID: '123' }, 'vscode'], [{ OPENCODE: '1', TERM_PROGRAM: 'vscode' }, 'opencode'], [{ OPENCODE_PID: '123' }, 'opencode'], [{ CODEX_THREAD_ID: 'synthetic', TERM_PROGRAM: 'vscode' }, 'codex'],
   ]) {
     assert.equal(detectHarness(env), expected);
     let prompts = 0;
@@ -70,7 +70,7 @@ test('every harness registration is saved and reuses the same connection without
   assert.equal(shared.harnesses.length, harnesses.length);
   for (const result of saved) {
     assert.equal(result.settingsFile, opts.settingsFile);
-    assert.deepEqual(result.server.args.slice(1), ['--connection', 'database', '--settings', opts.settingsFile]);
+    assert.deepEqual((result.harnessKey === 'opencode' ? result.server.command.slice(2) : result.server.args.slice(1)), ['--connection', 'database', '--settings', opts.settingsFile]);
     assert.equal(existsSync(result.configPath), true);
     assert.ok(shared.harnesses.some((entry) => entry.harnessKey === result.harnessKey && entry.configPath === result.configPath));
   }

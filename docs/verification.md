@@ -53,3 +53,13 @@ All setup runs retain named backend connections/policy and every configured nati
 Existing direct proxy/gateway launch modes remain supported. Shared policy is loaded at startup; reconnect is required for changes. Personal harness files were not edited during these tests.
 
 Shared-configuration validation passed: build, all 54 tests with installed Pi smoke testing enabled, local packed-package execution, and whitespace checks.
+
+## OpenCode setup follow-up
+
+OpenCode is included in the setup chooser, CLI help, status scanner, and supported-harness documentation. Inherited `OPENCODE=1` or `OPENCODE_PID` suggests OpenCode and requires confirmation. Global/project JSON and JSONC paths, XDG global paths, inherited `OPENCODE_CONFIG`, and explicit overrides are supported. Native entries use `mcp`, `type: "local"`, and an executable/arguments command array referencing the same shared DataVeil connection settings as other harnesses.
+
+Targeted JSONC edits preserve unrelated settings, existing server entries, comments, and trailing commas. Tests cover native schema validation, cancellation, declined replacement, exact backups, shared registration/reuse, disabled-entry status, and an official SDK tool call through the generated launcher that redacts fixture PII.
+
+Installed OpenCode CLI 1.18.33 accepted the generated JSONC registration and reported the synthetic DataVeil backend as connected via `opencode mcp list` in isolated temporary HOME/XDG directories. This verifies an actual CLI connection, without claiming an OpenCode UI tool invocation or real database integration. Personal harness configurations were not edited.
+
+Validation passed: `npm run build`, `DATAVEIL_PI_SMOKE=1 DATAVEIL_OPENCODE_SMOKE=1 npm test` (59 tests, all passed), packed installation including the JSONC parser dependency, and `git diff --check`. The OpenCode smoke check is opt-in; `DATAVEIL_OPENCODE_BIN` overrides its executable.

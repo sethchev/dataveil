@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { loadSettings, settingsPath, validateSettings } from './settings.js';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
+import { parse as parseJsonc, modify, applyEdits } from 'jsonc-parser';
 
 const defaultScript = fileURLToPath(new URL('./index.js', import.meta.url));
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -25,7 +26,38 @@ function definition(key, label, paths, field = 'mcpServers', format = 'json') {
   };
 }
 
+// OpenCode stores local launchers as a command array and accepts JSONC.
+const opencode = {
+  ...definition('opencode', 'OpenCode', (cwd, env = process.env) => [
+    ...(env.OPENCODE_CONFIG ? [resolve(cwd, env.OPENCODE_CONFIG)] : []),
+    ...['opencode.json', 'opencode.jsonc'].map((name) => join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode', name)),
+    join(cwd, 'opencode.json'), join(cwd, 'opencode.jsonc'),
+  ], 'mcp', 'jsonc'),
+  createEntry: ({ command, args }) => ({ type: 'local', command: [command, ...args], enabled: true }),
+  normalize: (entry) => ({ ...entry, command: Array.isArray(entry.command) ? entry.command[0] : undefined,
+    args: Array.isArray(entry.command) ? entry.command.slice(1) : [], env: entry.environment }),
+  parse(source) {
+    const errors = [];
+    const config = parseJsonc(source, errors, { allowTrailingComma: true });
+    if (errors.length) throw new Error('Invalid JSONC');
+    return config;
+  },
+  serialize(config, original) {
+    let source = original ?? '{}\n';
+    const previous = this.parse(source).mcp ?? {};
+    // Edit only changed entries, preserving unrelated settings and comments.
+    for (const [name, entry] of Object.entries(config.mcp ?? {})) {
+      if (JSON.stringify(previous[name]) === JSON.stringify(entry)) continue;
+      source = applyEdits(source, modify(source, ['mcp', name], entry, {
+        formattingOptions: { insertSpaces: true, tabSize: 2, eol: '\n' },
+      }));
+    }
+    return source;
+  },
+};
+
 export const harnesses = [
+  opencode,
   definition('codex', 'Codex CLI', (cwd, env = process.env) => [
     join(resolve(env.CODEX_HOME || join(homedir(), '.codex')), 'config.toml'),
     join(cwd, '.codex', 'config.toml'),
@@ -54,11 +86,21 @@ function validateConfig(config, harness) {
   if (own(config, harness.field) && !object(config[harness.field])) {
     throw new Error(`${harness.field} must be an object`);
   }
-  for (const otherField of ['mcpServers', 'servers', 'mcp_servers'].filter((field) => field !== harness.field)) {
+  for (const otherField of ['mcpServers', 'servers', 'mcp_servers', 'mcp'].filter((field) => field !== harness.field)) {
     if (own(config, otherField)) throw new Error(`Wrong MCP schema: expected ${harness.field}, not ${otherField}`);
   }
   for (const [name, server] of Object.entries(harness.getServers(config))) {
     if (!object(server)) throw new Error(`Invalid server entry: ${name}`);
+    if (harness.key === 'opencode') {
+      if (server.enabled !== undefined && typeof server.enabled !== 'boolean') throw new Error(`Invalid enabled flag: ${name}`);
+      if (server.type === undefined && Object.keys(server).every((key) => key === 'enabled') && own(server, 'enabled')) continue;
+      if (!['local', 'remote'].includes(server.type)) throw new Error(`Invalid OpenCode server type: ${name}`);
+      if (server.type === 'local' && (!Array.isArray(server.command) || !server.command.length || server.command.some((arg) => typeof arg !== 'string') || !server.command[0].trim())) throw new Error(`Invalid command array: ${name}`);
+      if (server.type === 'remote' && (typeof server.url !== 'string' || !server.url.trim())) throw new Error(`Missing remote URL: ${name}`);
+      if (server.environment !== undefined && (!object(server.environment) || Object.values(server.environment).some((value) => typeof value !== 'string'))) throw new Error(`Invalid environment: ${name}`);
+      if (server.args !== undefined || server.env !== undefined) throw new Error(`Wrong OpenCode launcher schema: ${name}`);
+      continue;
+    }
     if (server.command !== undefined && (typeof server.command !== 'string' || !server.command.trim())) throw new Error(`Invalid command: ${name}`);
     if (server.args !== undefined && (!Array.isArray(server.args) || server.args.some((arg) => typeof arg !== 'string'))) throw new Error(`Invalid args: ${name}`);
     if (server.env !== undefined && (!object(server.env) || Object.values(server.env).some((value) => typeof value !== 'string'))) throw new Error(`Invalid env: ${name}`);
@@ -76,8 +118,8 @@ function loadConfig(path, harness) {
     if (error.code !== 'ENOENT') throw error;
   }
   let config;
-  try { config = original === null ? harness.empty?.() ?? {} : harness.format === 'toml' ? parseToml(original) : JSON.parse(original); }
-  catch { throw new Error(`Malformed ${harness.format === 'toml' ? 'TOML' : 'JSON'} config: ${path}. Refusing to overwrite it.`); }
+  try { config = original === null ? harness.empty?.() ?? {} : harness.parse ? harness.parse(original) : harness.format === 'toml' ? parseToml(original) : JSON.parse(original); }
+  catch { throw new Error(`Malformed ${harness.format === 'toml' ? 'TOML' : harness.format === 'jsonc' ? 'JSONC' : 'JSON'} config: ${path}. Refusing to overwrite it.`); }
   validateConfig(config, harness);
   return { config, original };
 }
@@ -88,7 +130,7 @@ function atomicSave(path, config, original, harness, source) {
   let backupPath = null;
   try {
     const fd = openSync(temp, 'wx', 0o600);
-    try { writeFileSync(fd, source ?? (harness.format === 'toml' ? stringifyToml(config) : JSON.stringify(config, null, 2) + '\n')); fsyncSync(fd); }
+    try { writeFileSync(fd, source ?? (harness.serialize ? harness.serialize(config, original) : harness.format === 'toml' ? stringifyToml(config) : JSON.stringify(config, null, 2) + '\n')); fsyncSync(fd); }
     finally { closeSync(fd); }
     // Detect edits made while the wizard was open rather than clobbering them.
     if (loadConfig(path, harness).original !== original) throw new Error('Config changed during setup; retry configuration');
@@ -160,6 +202,7 @@ function savedConnections(command) {
 
 export function detectHarness(env = process.env) {
   if (env.CODEX_THREAD_ID || env.CODEX_SESSION_ID) return 'codex';
+  if (env.OPENCODE === '1' || env.OPENCODE_PID) return 'opencode';
   const terminal = String(env.TERM_PROGRAM ?? '').toLowerCase();
   if (terminal === 'cursor' || env.CURSOR_TRACE_ID) return 'cursor';
   if (terminal === 'windsurf') return 'windsurf';
@@ -291,11 +334,12 @@ export async function runConfigure(harnessKey = null, { scriptPath = defaultScri
       connectionName = name;
       if (own(shared.config.connections, connectionName) && await select(`Replace shared connection ${connectionName}? All registered harnesses will use the new settings after reconnecting.`, ['Keep existing (cancel)', 'Replace']) !== 'Replace') throw cancelled;
     }
-    const entry = {
+    const launcher = {
       ...(harness.field === 'servers' ? { type: 'stdio' } : {}),
       command: nodeExecutable(cwd),
       args: [resolve(cwd, scriptPath || defaultScript), '--connection', connectionName, '--settings', sharedPath],
     };
+    const entry = harness.createEntry ? harness.createEntry(launcher) : launcher;
     const sharedConfig = {
       ...shared.config,
       connections: { ...shared.config.connections, [connectionName]: { command, args, mode } },
@@ -338,7 +382,8 @@ export function formatStatusText(snapshots, { scriptPath = defaultScript } = {})
     const harness = harnesses.find((h) => h.key === snapshot.harnessKey) ?? harnesses.find((h) => h.key === 'generic');
     try { validateConfig(snapshot.config, harness); }
     catch (error) { lines.push(`  Invalid config: ${error.message}`); continue; }
-    for (const [name, server] of Object.entries(harness.getServers(snapshot.config))) {
+    for (const [name, nativeEntry] of Object.entries(harness.getServers(snapshot.config))) {
+      const server = harness.normalize ? harness.normalize(nativeEntry) : nativeEntry;
       if (!isDataveil(server, scriptPath)) { lines.push(`  ${name}: not configured through DataVeil`); continue; }
       count++;
       const args = server.args ?? [];

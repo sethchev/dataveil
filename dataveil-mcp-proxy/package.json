@@ -53,6 +53,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "jsonc-parser": "^3.3.1",
     "smol-toml": "^1.9.0"
   }
 }
