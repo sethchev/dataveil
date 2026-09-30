@@ -243,6 +243,56 @@ Backward-compatible Oracle SQLcl options:
   --sqlcl-arg ARG           Alias for --arg
 ```
 
+## Pi extension (interactive setup)
+
+DataVeil includes a Pi coding-agent extension in `extensions/dataveil.ts` that provides interactive commands for configuring and monitoring DataVeil.
+
+### `/dataveil setup`
+
+Interactive setup that:
+1. **Auto-discovers database MCP backends** via your shell `PATH` and common install locations (`/opt/homebrew/bin`, `~/Downloads/sqlcl/bin`, `~/sqlcl/bin`, etc.)
+2. **Prompts for a connection name** (e.g. `prod_oracle`, `dev_postgres`) — you choose the MCP server name instead of auto-generated keys
+3. **Lists saved SQLcl connections** via `connmgr list` and lets you pick one
+4. **Writes the config** to `~/.pi/agent/mcp.json` or `.pi/mcp.json`
+
+Example walkthrough in TUI mode:
+```
+Connection name: prod_oracle
+Select a database backend to protect with DataVeil:
+  Oracle SQLcl (/home/seth/Downloads/sqlcl/bin/sql)
+Choose a saved SQLcl connection: dataveil_ai
+Save configuration to: Global (~/.pi/agent/mcp.json)
+
+DataVeil configured: server "prod_oracle" → Oracle SQLcl.
+Run /reload or start a new session to connect.
+```
+
+### `/dataveil status`
+
+Shows which MCP servers are protected by DataVeil and which are raw (unprotected). Scans both global and project `mcp.json` files:
+
+```
+🔒 DataVeil Privacy Proxy Status
+
+📁 Global (~/.pi/agent/mcp.json)
+   ✅ oracle  → DataVeil (redact mode)  backend: /home/seth/Downloads/sqlcl/bin/sql
+
+Summary: 1 protected, 0 unprotected database MCP server(s)
+```
+
+- ✅ = protected by DataVeil (shows PII mode and backend path)
+- ⚠️ = raw database server with no privacy proxy
+
+### `/dataveil gateway`
+
+Registers DataVeil gateway mode for multi-database projects. Requires a `dataveil-profiles.json` file in the project root.
+
+### Session notifications
+
+On every session start, the extension:
+- Shows an **info notification** if DataVeil is actively protecting server(s)
+- Shows a **warning notification** if any raw (unprotected) database MCP servers are detected
+
 ## Development
 
 ```bash

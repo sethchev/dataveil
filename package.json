@@ -4,6 +4,7 @@
   "private": true,
   "description": "DataVeil: database-agnostic privacy proxy for MCP tool results.",
   "type": "module",
+  "keywords": ["pi-package"],
   "workspaces": [
     "dataveil-mcp-proxy"
   ],
@@ -14,5 +15,9 @@
   },
   "devDependencies": {
     "typescript": "^5.6.3"
+  },
+  "pi": {
+    "extensions": ["./extensions/dataveil.ts"],
+    "skills": ["./skills/dataveil"]
   }
 }
