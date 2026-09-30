@@ -1,139 +1,48 @@
-# DataVeil Privacy Proxy
+---
+name: dataveil
+description: Configure DataVeil in front of a stdio database MCP backend, inspect saved policy, or use its named-profile gateway.
+---
 
-DataVeil is a database-agnostic privacy proxy for stdio MCP servers. It intercepts MCP `tools/call` results and redacts sensitive data (PII, credentials, emails, SSNs, phone numbers, addresses) before they reach the AI agent.
+# DataVeil
 
-## When to use DataVeil
+Architecture: any stdio MCP agent → DataVeil → any stdio MCP backend → database or service.
 
-ALWAYS use DataVeil when connecting to a database through an MCP server. Never configure a raw database MCP server without DataVeil in between.
+Use DataVeil when the user wants MCP tool-result privacy. SQLcl `-mcp` is an eligible backend. Raw `psql`, `sqlite3`, `mysql`, and `mariadb` are database clients, not MCP servers; use a separate stdio MCP implementation. Any explicit stdio MCP backend is eligible regardless of installed database clients.
 
-## Architecture
+In Pi, `/dataveil setup` uses the shared cancellable wizard; `/dataveil status` reports saved configuration; `/dataveil gateway` registers a session-only gateway with project `dataveil-profiles.json`. Reload Pi after saved configuration changes. Non-UI setup never writes automatic defaults.
 
-```
-AI Agent (pi) → DataVeil Proxy → Database MCP Server (SQLcl, psql, etc.) → Database
-```
+Terminal checkout equivalents:
 
-DataVeil operates at the MCP JSON-RPC layer, not the database protocol layer. This makes it work with Oracle, PostgreSQL, MySQL, SQLite, or any stdio MCP backend.
-
-## Setup
-
-### For new database connections
-
-Ask the user to run the interactive setup command:
-
-```bash
-/dataveil setup
+```sh
+node ./dataveil-mcp-proxy/src/index.js setup --harness pi
+node ./dataveil-mcp-proxy/src/index.js status --harness pi
 ```
 
-This command:
-1. Detects installed database MCP backends (SQLcl, psql, sqlite3, etc.)
-2. Prompts for a saved connection or configuration
-3. Writes the MCP configuration with DataVeil wrapping the backend
-4. Requires `/reload` or a new session to activate
+Terminal `dataveil setup` detects the caller from available session/terminal markers, asks for confirmation, and lets the user choose another harness. It includes Codex CLI. `--harness codex` explicitly selects the candidate and still prompts for confirmation, with global/project TOML `config.toml` and `CODEX_HOME` support. Codex settings and other MCP entries are preserved; TOML comments/formatting are normalized and exact original bytes are backed up.
 
-### For existing raw database MCP servers
+Setup saves backend connections and all configured harness registrations in one shared DataVeil settings file (`~/.config/dataveil/config.json` by default on POSIX; XDG/Windows overrides supported). Each native MCP entry launches `--connection NAME --settings /absolute/path/to/config.json`. Register additional harnesses with setup and reuse an existing shared connection; retain prior registrations. Multiple harnesses can read the same config and run independent sessions. Shared backend/policy changes apply on reconnect, not automatically to running sessions. Use `--settings FILE` or `DATAVEIL_CONFIG_FILE` to override shared settings.
 
-If you detect a raw database MCP server already configured (e.g., one pointing directly at `sql` or `psql` without DataVeil), warn the user:
+Use `--config /absolute/path/to/mcp.json` (JSON clients) or `--config /absolute/path/to/config.toml` (Codex) for overrides. For local tarball installs, use `dataveil` instead of the Node/script pair. Registry publication has not been verified; do not recommend registry execution as an available release.
 
-> "The database MCP server `[name]` is not protected by DataVeil. Run `/dataveil setup` to add privacy redaction, or ask me to migrate the configuration."
+Keep credentials in backend stores or inherited environment references, never chat, wizard arguments, or inline passwords. Preserve unrelated config and fail on malformed JSON. Confirm duplicate replacement. Only configuration passing through the proxy is covered; do not describe unrelated entries as protected or infer they access databases.
 
-### For gateway mode (multi-database)
+Pi global config is `~/.pi/agent/mcp.json`; project config is `.pi/mcp.json`, both with `mcpServers`. Use the resolved Node executable and absolute DataVeil script path; setup-generated launchers use `--connection` and `--settings`; manual direct launchers may still use `--command` with repeated `--arg` values. See `docs/install.md` for other harness paths/schemas, manual configs and packaging.
 
-Use gateway mode when the user needs to switch between multiple database connections:
-
-```bash
-/dataveil gateway
-```
-
-Requirements:
-1. A `dataveil-profiles.json` file in the project root with named connection profiles
-2. The gateway exposes `dataveil_connect`, `dataveil_disconnect`, and `dataveil_status` tools
-3. Backend tools only appear after `dataveil_connect` is called with a profile name
-4. Gateway defaults to `block` mode (withholds entire result if PII detected)
-
-Example `dataveil-profiles.json`:
+Gateway profiles:
 
 ```json
 {
   "connections": {
-    "prod_oracle": {
-      "command": "/path/to/sqlcl/bin/sql",
-      "args": ["-name", "production", "-mcp"],
-      "connectTool": "connect"
-    },
-    "dev_postgres": {
-      "command": "psql-mcp-server",
-      "args": ["--connection-string", "postgres://dev@localhost/devdb"]
+    "demo": {
+      "command": "/absolute/path/to/database-mcp-server",
+      "args": []
     }
   }
 }
 ```
 
-## Configuration rules
+`dataveil_connect` selects a profile by `name`, `dataveil_disconnect` closes it, and `dataveil_status` reports gateway routing/policy. Backend tools appear after selection; a database session may still require backend connection tools. Optional `connectTool` defaults to a `connection_name` argument equal to the profile name; match those names when using it.
 
-When writing or editing `~/.pi/agent/mcp.json` or `.pi/mcp.json`:
+Direct proxy defaults to redact, gateway to block; CLI `--mode` overrides `DATAVEIL_PII_MODE`. `DATAVEIL_ENABLED=false` disables gateway protection. CLI/Pi status is configuration evidence, not runtime evidence. Gateway status is evidence about that gateway's routing/policy, not all access paths or complete PII detection.
 
-- **NEVER** write a raw database server command directly. Always wrap through DataVeil.
-- The `command` field should be `node` with the DataVeil `index.js` path in `args`.
-- The backend command goes in `--command` and backend args in repeated `--arg` options.
-- Set `DATAVEIL_PII_MODE` to `redact` (replace values in place) or `block` (withhold entire result).
-- Set `DATAVEIL_BACKEND_TIMEOUT_MS` to `120000` (default) or adjust as needed.
-
-Example configuration:
-
-```json
-{
-  "mcpServers": {
-    "oracle": {
-      "command": "node",
-      "args": [
-        "/absolute/path/to/dataveil/dataveil-mcp-proxy/src/index.js",
-        "--command", "/path/to/sqlcl/bin/sql",
-        "--arg", "-name",
-        "--arg", "dataveil_ai",
-        "--arg", "-mcp"
-      ],
-      "env": {
-        "DATAVEIL_PII_MODE": "redact",
-        "DATAVEIL_BACKEND_TIMEOUT_MS": "120000"
-      },
-      "exposure": "codemode"
-    }
-  }
-}
-```
-
-## What gets redacted
-
-DataVeil scans tool results recursively and redacts:
-
-- Oracle-style connect strings (`user/password@host:port/service`)
-- Credential assignments (`password=...`, `secret=...`, API tokens)
-- Email addresses
-- US Social Security numbers
-- Phone numbers
-- IPv4 addresses
-- Values under known sensitive column names: `EMAIL`, `SSN`, `PHONE`, `FIRST_NAME`, `LAST_NAME`, `ADDRESS`, `PASSWORD`, `TOKEN`, and similar
-- Sensitive values in CSV-like text when headers contain known sensitive columns
-
-## Modes
-
-- **Redact** (default): Replaces sensitive values with `[REDACTED_PII]` and returns the rest of the result.
-- **Block**: Withholds the entire tool result if any sensitive data is detected. Returns an error message explaining that sensitive data was blocked.
-
-Use `block` mode for production databases with strict compliance requirements. Use `redact` for development and troubleshooting where the structure of results still matters.
-
-## Backward compatibility
-
-DataVeil preserves backward compatibility with Oracle SQLcl:
-
-- `DATAVEIL_SQLCL` and `SECURE_ORACLE_SQLCL` environment variables
-- `--sqlcl` and `--sqlcl-arg` CLI options
-- Auto-adds `-mcp` when SQLcl is detected with no arguments
-
-## Important notes
-
-- DataVeil only controls MCP traffic. Direct database connections outside MCP are not protected.
-- It is not a replacement for database permissions or least-privilege accounts.
-- Messages over `--max-message-bytes` (default 16 MiB), malformed JSON, or incomplete messages cause fail-closed behavior.
-- Backend stderr is also sanitized before DataVeil writes it locally.
-- Always keep database credentials in the backend MCP server's normal secret store or wallet. Do not paste credentials into agent chat.
+Redaction uses known field names and patterns, can miss unknown sensitive data, and can produce false positives. Metadata is preserved, not sanitized. Direct database protocols and remote HTTP MCP are unsupported. Least-privilege backend permissions remain necessary. Do not claim a real harness UI test based on config files or simulated clients.

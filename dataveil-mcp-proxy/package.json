@@ -10,7 +10,8 @@
     "./gateway": "./src/gateway.js",
     "./redact": "./src/redact.js",
     "./profiles": "./src/profiles.js",
-    "./configure": "./src/configure.js"
+    "./configure": "./src/configure.js",
+    "./settings": "./src/settings.js"
   },
   "bin": {
     "dataveil": "src/index.js",
@@ -21,8 +22,8 @@
     "src/**/*.js"
   ],
   "scripts": {
-    "build": "node --check src/index.js && node --check src/proxy.js && node --check src/redact.js && node --check src/gateway.js && node --check src/profiles.js && node --check src/configure.js",
-    "test": "node --test ../../test/mcp-proxy.test.mjs"
+    "build": "node --check src/index.js && node --check src/proxy.js && node --check src/redact.js && node --check src/gateway.js && node --check src/profiles.js && node --check src/configure.js && node --check src/settings.js",
+    "test": "node --test ../test/*.test.mjs"
   },
   "repository": {
     "type": "git",
@@ -47,8 +48,11 @@
     "agent"
   ],
   "author": "Seth Chev",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "smol-toml": "^1.9.0"
   }
 }

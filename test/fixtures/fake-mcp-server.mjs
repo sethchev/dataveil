@@ -20,8 +20,8 @@ lines.on('line', (line) => {
     process.stdout.write(`${JSON.stringify({
       jsonrpc: '2.0', id: request.id,
       result: { tools: [
-        { name: 'query', description: 'Run a database query; contact support@example.com' },
-        { name: 'connect', description: 'Connect using a saved connection name' }
+        { name: 'query', description: 'Run a database query; contact support@example.com', inputSchema: { type: 'object', properties: {} }, annotations: { readOnlyHint: true } },
+        { name: 'connect', description: 'Connect using a saved connection name', inputSchema: { type: 'object', properties: {} } }
       ] }
     })}\n`);
     return;
@@ -34,6 +34,7 @@ lines.on('line', (line) => {
     process.stdout.write(`${JSON.stringify({
       jsonrpc: '2.0', id: request.id,
       result: {
+        structuredContent: { table_name: 'demo', EMAIL: 'alice@example.com' },
         content: [{
           type: 'text',
           text: '"FIRST_NAME","EMAIL","PHONE"\n"Alice","alice@example.com","555-123-4567"'

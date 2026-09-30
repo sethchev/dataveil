@@ -84,7 +84,9 @@ export function parseArguments(argv, env = process.env) {
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (argument === '--command') options.command = nextValue(index++, argument);
+    if (argument === '--connection') options.connection = nextValue(index++, argument);
+    else if (argument === '--settings') options.settingsFile = nextValue(index++, argument);
+    else if (argument === '--command') options.command = nextValue(index++, argument);
     else if (argument === '--sqlcl') {
       options.command = nextValue(index++, argument);
       options.sqlclCompatibility = true;
@@ -111,7 +113,7 @@ export function parseArguments(argv, env = process.env) {
   if (!Number.isSafeInteger(options.backendTimeoutMs) || options.backendTimeoutMs < 100) {
     throw new Error('--backend-timeout-ms must be an integer of at least 100');
   }
-  if (options.commandArgs.length === 0 && (options.sqlclCompatibility || usesSqlclDefault(options.command, env))) options.commandArgs.push('-mcp');
+  if (options.connection === undefined && options.commandArgs.length === 0 && (options.sqlclCompatibility || usesSqlclDefault(options.command, env))) options.commandArgs.push('-mcp');
   return options;
 }
 
