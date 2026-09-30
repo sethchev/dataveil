@@ -1,17 +1,53 @@
 {
   "name": "@dataveil/mcp-proxy",
   "version": "0.1.0",
-  "private": true,
   "description": "Database-agnostic privacy proxy for stdio MCP servers",
   "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./proxy": "./src/proxy.js",
+    "./gateway": "./src/gateway.js",
+    "./redact": "./src/redact.js",
+    "./profiles": "./src/profiles.js",
+    "./configure": "./src/configure.js"
+  },
   "bin": {
+    "dataveil": "src/index.js",
     "dataveil-mcp-proxy": "src/index.js",
     "dataveil-gateway": "src/index.js"
   },
+  "files": [
+    "src/**/*.js"
+  ],
   "scripts": {
-    "build": "node --check src/index.js && node --check src/proxy.js && node --check src/redact.js && node --check src/gateway.js && node --check src/profiles.js",
+    "build": "node --check src/index.js && node --check src/proxy.js && node --check src/redact.js && node --check src/gateway.js && node --check src/profiles.js && node --check src/configure.js",
     "test": "node --test ../../test/mcp-proxy.test.mjs"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sethchev/dataveil.git",
+    "directory": "dataveil-mcp-proxy"
+  },
+  "bugs": {
+    "url": "https://github.com/sethchev/dataveil/issues"
+  },
+  "homepage": "https://github.com/sethchev/dataveil#readme",
+  "keywords": [
+    "mcp",
+    "privacy",
+    "proxy",
+    "pii",
+    "redaction",
+    "database",
+    "oracle",
+    "postgresql",
+    "sqlite",
+    "ai",
+    "agent"
+  ],
+  "author": "Seth Chev",
+  "license": "MIT",
   "engines": {
     "node": ">=20"
   }
