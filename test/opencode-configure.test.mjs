@@ -20,7 +20,7 @@ function ui(values) {
   const take = async (title) => { assert.ok(values.length, title); return values.shift(); };
   return { input: take, select: take };
 }
-const responses = () => ['Confirm', 'Custom stdio MCP backend', process.execPath, JSON.stringify([backend]), 'redact', 'database', 'Save'];
+const responses = () => ['Confirm', 'Other database / custom MCP', 'Installed stdio MCP executable', process.execPath, JSON.stringify([backend]), 'redact', 'database', 'Save'];
 const original = `{
   // Keep model and existing integrations untouched.
   "model": "example/model",
@@ -77,7 +77,7 @@ test('OpenCode malformed schemas and cancelled replacement leave existing files 
     assert.equal((await runConfigure('opencode', { ...opts, ui: ui([...responses().slice(0, i), undefined]) })).status, 'cancelled');
     assert.equal(readFileSync(opts.configPath, 'utf8'), original);
   }
-  const values = responses(); values[5] = 'other'; values.splice(6, 0, 'Keep existing (cancel)');
+  const values = responses(); const entryIndex = values.indexOf('database'); values[entryIndex] = 'other'; values.splice(entryIndex + 1, 0, 'Keep existing (cancel)');
   assert.equal((await runConfigure('opencode', { ...opts, ui: ui(values) })).status, 'cancelled');
   assert.equal(readFileSync(opts.configPath, 'utf8'), original);
 });

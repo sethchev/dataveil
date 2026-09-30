@@ -50,7 +50,21 @@ Config adapters cover Codex CLI, OpenCode, Claude Desktop, Cursor, legacy Windsu
 
 ## Setup for each harness
 
-Each command opens the wizard. Confirm the harness, choose the destination config, select a stdio MCP backend and its arguments, choose `redact` or `block`, and name the MCP entry. For Oracle, select **Oracle SQLcl MCP** and an optional saved SQLcl connection. Other databases require a separately installed compatible stdio MCP backend.
+Each command opens the wizard. Confirm the harness, choose the destination config, then select your database:
+
+1. **Oracle SQLcl MCP** — automatically finds SQLcl's `sql` executable through environment hints, PATH, and common installation locations. If found, setup uses it and shows its path while asking for an optional saved SQLcl connection. If missing, setup asks for the executable path. DataVeil supplies `-mcp` automatically.
+2. **PostgreSQL**
+3. **MySQL**
+4. **MariaDB**
+5. **SQLite**
+6. **SQL Server**
+7. **Other database / custom MCP**
+
+For choices 2–7, choose **Installed stdio MCP executable**, **MCP package via npx**, or **MCP package via uvx**. Enter your preferred MCP executable/package and its backend arguments as a JSON string array; include any arguments that backend needs for stdio transport. Setup stores the launch command; packages run when the harness connects. `npx`/`uvx` must already be installed to select their option. Database names identify your intended database; they do not select a provider or install a database server.
+
+SQLcl discovery checks `DATAVEIL_SQLCL` (an executable path), `SQLCL_HOME/bin/sql`, inherited PATH (`sql`/`sqlcl`), then common locations including `~/Downloads/sqlcl/bin/sql`, `~/sqlcl/bin/sql`, and `/opt/sqlcl/bin/sql`. Set `DATAVEIL_SQLCL` to prefer a specific installation.
+
+Finish by choosing `redact` or `block` and naming the MCP entry. If you reuse an existing **Shared DataVeil connection**, setup skips database/backend selection and keeps its saved settings.
 
 | Harness | Command from the repository root | Destination to choose |
 | --- | --- | --- |

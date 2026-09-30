@@ -63,3 +63,13 @@ Targeted JSONC edits preserve unrelated settings, existing server entries, comme
 Installed OpenCode CLI 1.18.33 accepted the generated JSONC registration and reported the synthetic DataVeil backend as connected via `opencode mcp list` in isolated temporary HOME/XDG directories. This verifies an actual CLI connection, without claiming an OpenCode UI tool invocation or real database integration. Personal harness configurations were not edited.
 
 Validation passed: `npm run build`, `DATAVEIL_PI_SMOKE=1 DATAVEIL_OPENCODE_SMOKE=1 npm test` (59 tests, all passed), packed installation including the JSONC parser dependency, and `git diff --check`. The OpenCode smoke check is opt-in; `DATAVEIL_OPENCODE_BIN` overrides its executable.
+
+## Database chooser and SQLcl discovery follow-up
+
+New connections now start with Oracle SQLcl MCP, PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, or Other database / custom MCP. Oracle searches explicit environment hints, PATH, and a bounded list of installation roots, including extracted Downloads directories. It uses a discovered executable automatically, shows its path in the saved-connection prompt, asks for a path only when discovery fails, and supplies `-mcp`. Reusing a saved connection skips database/backend selection.
+
+Other database choices offer an installed stdio MCP executable or a user-selected package launched through installed `npx`/`uvx`. Setup records package launch arguments without executing the package. No specific third-party backend is recommended or database integration newly claimed. Raw database clients remain ineligible backend executables.
+
+Tests verify all database branches, SQLcl discovery precedence and missing-executable fallback, saved SQLcl connections, package runner argument construction, absence of package execution during setup, invalid package names, and cancellation. Actual discovery found the system's existing Downloads SQLcl installation; its read-only version command reported release 26.3.0.0. No database connection was made.
+
+Validation passed: build, `DATAVEIL_PI_SMOKE=1 DATAVEIL_OPENCODE_SMOKE=1 npm test` (65 tests, all passed), packed-package installation, and whitespace checks. Both READMEs, install documentation, and the DataVeil skill now describe the database-first flow.

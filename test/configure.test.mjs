@@ -14,7 +14,7 @@ function answers(values, before = () => {}) {
   const take = async (title, options) => { before(title, options); if (title.startsWith('Configure ')) return 'Confirm'; assert.ok(values.length, `Unexpected prompt: ${title}`); return values.shift(); };
   return { input: take, select: take };
 }
-const custom = (name = 'database') => ['Custom stdio MCP backend', process.execPath, '["arbitrary arg", "--flag"]', 'redact', name, 'Save'];
+const custom = (name = 'database') => ['Other database / custom MCP', 'Installed stdio MCP executable', process.execPath, '["arbitrary arg", "--flag"]', 'redact', name, 'Save'];
 
 for (const harness of harnesses.filter((h) => h.format === 'json')) {
   test(`${harness.key}: correct schema, override, preservation, secure backup and absolute launcher`, async (t) => {
@@ -95,8 +95,8 @@ test('PATH lookup uses inherited paths, rejects non-executable files and directo
 
 test('raw database clients are rejected; SQLcl permits manual punctuation and spaces', async (t) => {
   const opts = fixture(t);
-  await assert.rejects(runConfigure('generic', { ...opts, ui: answers(['Custom stdio MCP backend', 'psql']) }), /not a stdio MCP backend/);
-  const result = await runConfigure('generic', { ...opts, ui: answers(['Oracle SQLcl MCP', process.execPath, 'Type a saved connection name', 'demo: saved connection!', 'block', 'database', 'Save']) });
+  await assert.rejects(runConfigure('generic', { ...opts, ui: answers(['Other database / custom MCP', 'Installed stdio MCP executable', 'psql']) }), /not a stdio MCP backend/);
+  const result = await runConfigure('generic', { ...opts, env: { PATH: '', HOME: opts.cwd, DATAVEIL_SQLCL: process.execPath }, ui: answers(['Oracle SQLcl MCP', 'Type a saved connection name', 'demo: saved connection!', 'block', 'database', 'Save']) });
   assert.deepEqual(JSON.parse(readFileSync(opts.settingsFile)).connections.database.args, ['-name', 'demo: saved connection!', '-mcp']);
 });
 

@@ -13,7 +13,7 @@ import { parse as parseJsonc, modify, applyEdits } from 'jsonc-parser';
 const defaultScript = fileURLToPath(new URL('./index.js', import.meta.url));
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
-const rawClients = new Set(['psql', 'sqlite3', 'mysql', 'mariadb']);
+const rawClients = new Set(['psql', 'sqlite3', 'mysql', 'mariadb', 'sqlcmd', 'sqlplus']);
 const commandBase = (command) => basename(command).toLowerCase().replace(/\.(exe|cmd|bat)$/, '');
 
 function definition(key, label, paths, field = 'mcpServers', format = 'json') {
@@ -186,6 +186,33 @@ export function executable(command, cwd = process.cwd(), env = process.env) {
   throw new Error(`Executable not found: ${command}`);
 }
 
+export const databaseOptions = ['Oracle SQLcl MCP', 'PostgreSQL', 'MySQL', 'MariaDB', 'SQLite', 'SQL Server', 'Other database / custom MCP'];
+export const backendOptions = ['Installed stdio MCP executable', 'MCP package via npx', 'MCP package via uvx'];
+
+/** Search explicit environment hints, PATH, then a bounded list of SQLcl locations. */
+export function discoverSqlcl(cwd = process.cwd(), env = process.env) {
+  const home = env.HOME || env.USERPROFILE || homedir();
+  const roots = [
+    ...(env.SQLCL_HOME ? [resolve(cwd, env.SQLCL_HOME)] : []),
+    join(home, 'sqlcl'), join(home, 'Downloads', 'sqlcl'), join(home, 'tools', 'sqlcl'),
+    join(home, '.local', 'share', 'sqlcl'),
+    '/opt/sqlcl', '/opt/oracle/sqlcl', '/usr/local/sqlcl', '/usr/share/sqlcl',
+    ...(env.ORACLE_HOME ? [join(resolve(cwd, env.ORACLE_HOME), 'sqlcl')] : []),
+    ...(env.ProgramFiles ? [join(env.ProgramFiles, 'Oracle', 'sqlcl')] : []),
+  ];
+  const candidates = [
+    ...(env.DATAVEIL_SQLCL ? [env.DATAVEIL_SQLCL] : []),
+    ...(env.SQLCL_HOME ? [join(resolve(cwd, env.SQLCL_HOME), 'bin', platform() === 'win32' ? 'sql.exe' : 'sql')] : []),
+    'sql', 'sqlcl',
+    ...roots.flatMap((root) => [join(root, 'bin', 'sql'), join(root, 'sqlcl', 'bin', 'sql')])
+      .map((path) => platform() === 'win32' ? path + '.exe' : path),
+  ];
+  for (const candidate of candidates) {
+    try { return executable(candidate, cwd, env); } catch { /* Try next installation. */ }
+  }
+  return null;
+}
+
 // Pi may be distributed as a compiled Bun executable; that executable cannot
 // launch our Node CLI. Resolve Node from inherited PATH in that host.
 export function nodeExecutable(cwd = process.cwd()) {
@@ -298,27 +325,39 @@ export async function runConfigure(harnessKey = null, { scriptPath = defaultScri
       if (choice !== 'Add a new connection') connectionName = choice;
     }
     if (!connectionName) {
-      let discoveredSqlcl;
-      for (const candidate of ['sql', 'sqlcl']) {
-        try { discoveredSqlcl = executable(candidate, cwd, env); break; } catch {}
-      }
-      const backend = await select('Select a stdio MCP backend (not a database CLI)', ['Custom stdio MCP backend', 'Oracle SQLcl MCP']);
-
-      if (backend === 'Oracle SQLcl MCP') {
-        command = executable((await input('SQLcl executable', discoveredSqlcl || 'sql')) || discoveredSqlcl || 'sql', cwd, env);
+      const database = await select('Which database MCP backend do you want to configure?', databaseOptions);
+      if (database === 'Oracle SQLcl MCP') {
+        command = discoverSqlcl(cwd, env);
+        if (!command) {
+          const entered = await input('SQLcl was not found. Enter the SQLcl sql executable path');
+          if (!entered) throw new Error('SQLcl executable path cannot be empty');
+          command = executable(entered, cwd, env);
+        }
         const names = savedConnections(command);
-        const choice = await select('Saved SQLcl connection', [...names, 'Type a saved connection name', 'No initial connection']);
+        const choice = await select(`Saved SQLcl connection (using ${command})`, [...names, 'Type a saved connection name', 'No initial connection']);
         const connection = choice === 'Type a saved connection name' ? await input('Saved SQLcl connection name') : choice === 'No initial connection' ? '' : choice;
         if (choice === 'Type a saved connection name' && !connection) throw new Error('Saved connection name cannot be empty');
         args = connection ? ['-name', connection, '-mcp'] : ['-mcp'];
       } else {
-        const entered = await input('MCP backend executable (single command, not a shell string)');
-        if (!entered) throw new Error('Backend command cannot be empty');
-        if (rawClients.has(commandBase(entered))) throw new Error(`${entered} is a database CLI, not a stdio MCP backend`);
-        command = executable(entered, cwd, env);
+        const backend = await select(`Choose a stdio MCP server for ${database}`, backendOptions);
+        let prefix = [];
+        if (backend === 'Installed stdio MCP executable') {
+          const entered = await input('MCP backend executable (single command, not a shell string)');
+          if (!entered) throw new Error('Backend command cannot be empty');
+          if (rawClients.has(commandBase(entered))) throw new Error(`${entered} is a database CLI, not a stdio MCP backend`);
+          command = executable(entered, cwd, env);
+        } else {
+          const runner = backend === 'MCP package via npx' ? 'npx' : 'uvx';
+          command = executable(runner, cwd, env);
+          const packageName = await input(`${database} MCP package to run with ${runner} (package name, not a shell command)`);
+          if (!packageName || packageName.startsWith('-') || /\s/.test(packageName)) throw new Error('Enter a single MCP package name without flags or spaces');
+          prefix = runner === 'npx' ? ['--yes', packageName] : [packageName];
+        }
         const encoded = await input('Backend arguments as a JSON string array (no passwords; use credential stores or inherited environment)', '[]');
-        try { args = JSON.parse(encoded || '[]'); } catch { throw new Error('Backend arguments must be a JSON string array'); }
-        if (!Array.isArray(args) || args.some((arg) => typeof arg !== 'string')) throw new Error('Backend arguments must be a JSON string array');
+        let supplied;
+        try { supplied = JSON.parse(encoded || '[]'); } catch { throw new Error('Backend arguments must be a JSON string array'); }
+        if (!Array.isArray(supplied) || supplied.some((arg) => typeof arg !== 'string')) throw new Error('Backend arguments must be a JSON string array');
+        args = [...prefix, ...supplied];
       }
       mode = await select('Privacy mode', ['redact', 'block']);
     } else {

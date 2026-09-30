@@ -17,7 +17,7 @@ function ui(values, before = () => {}) {
   const take = async (title, options) => { before(title, options); if (title.startsWith('Configure ') && !['Choose another harness', undefined].includes(values[0])) return 'Confirm'; assert.ok(values.length, title); return values.shift(); };
   return { input: take, select: take };
 }
-const responses = (name = 'database') => ['Custom stdio MCP backend', process.execPath, '["arg with spaces", "--flag"]', 'block', name, 'Save'];
+const responses = (name = 'database') => ['Other database / custom MCP', 'Installed stdio MCP executable', process.execPath, '["arg with spaces", "--flag"]', 'block', name, 'Save'];
 const original = `# Existing user settings
 model = "example-model"
 model_reasoning_effort = "high"

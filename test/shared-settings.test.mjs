@@ -22,7 +22,7 @@ function ui(values, before = () => {}) {
   const take = async (title, choices) => { before(title, choices); assert.ok(values.length, title); return values.shift(); };
   return { input: take, select: take };
 }
-const create = (mode = 'redact') => ['Confirm', 'Custom stdio MCP backend', process.execPath, JSON.stringify([backend]), mode, 'database', 'Save'];
+const create = (mode = 'redact') => ['Confirm', 'Other database / custom MCP', 'Installed stdio MCP executable', process.execPath, JSON.stringify([backend]), mode, 'database', 'Save'];
 const nativePath = (opts, harness) => join(opts.cwd, `${harness.key}.${harness.format === 'toml' ? 'toml' : 'json'}`);
 
 async function connect(server, cwd) {

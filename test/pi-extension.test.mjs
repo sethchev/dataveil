@@ -35,7 +35,7 @@ test('single documented command dispatches; cancelled setup never writes', async
 test('actual setup handler delegates to shared UI and persists project config', async (t) => {
   const f = fixture(t);
   const path = join(f.cwd, '.pi', 'mcp.json');
-  f.ctx.ui.select = async (title) => title.startsWith('Configure ') ? 'Confirm' : title === 'Destination config file' ? path : title.startsWith('Select a stdio') ? 'Custom stdio MCP backend' : title === 'Privacy mode' ? 'redact' : 'Save';
+  f.ctx.ui.select = async (title) => title.startsWith('Configure ') ? 'Confirm' : title === 'Destination config file' ? path : title.startsWith('Which database') ? 'Other database / custom MCP' : title.startsWith('Choose a stdio') ? 'Installed stdio MCP executable' : title === 'Privacy mode' ? 'redact' : 'Save';
   f.ctx.ui.input = async (title) => title.startsWith('MCP backend executable') ? process.execPath : title.startsWith('Backend arguments') ? '[]' : 'demo';
   await f.run('setup');
   assert.equal(JSON.parse(readFileSync(path)).mcpServers.demo.command, process.execPath);
