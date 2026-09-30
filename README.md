@@ -10,13 +10,15 @@ It forwards requests, tool schemas, and metadata, and sanitizes backend `tools/c
 
 ## Run from a checkout
 
+Requires Node.js 20 or newer. Clone and install dependencies:
+
 ```sh
+git clone https://github.com/sethchev/dataveil.git
+cd dataveil
 npm install
-npm run build
-npm test
-node ./dataveil-mcp-proxy/src/index.js setup --harness cursor
-node ./dataveil-mcp-proxy/src/index.js status
 ```
+
+Run the setup command for your harness below from the repository root. You can also run `node ./dataveil-mcp-proxy/src/index.js setup` to confirm the detected harness or choose one. No build step or global installation is required to run setup.
 
 Setup also supports `--configure`, `--harness` and `--config`. It detects the caller when session/terminal markers are available, asks you to confirm the harness, and shares one cancellable wizard across terminal and Pi, preserves existing config, confirms replacements, and creates backups. Generated launchers use absolute executable, script and shared settings paths. Setup saves backend connections and every configured harness registration in `~/.config/dataveil/config.json` (platform/environment overrides are supported). Adding another harness reuses a saved connection while keeping its native registration separate. Multiple harnesses can read those settings and run independent MCP sessions at once; shared changes apply after reconnecting.
 
@@ -46,11 +48,35 @@ dataveil setup --harness generic --config /absolute/path/to/mcp.json
 
 Config adapters cover Codex CLI, OpenCode, Claude Desktop, Cursor, legacy Windsurf, VS Code, Cline, Pi, and generic clients. Cline and unverified platform locations require explicit paths. Codex uses TOML `mcp_servers`; VS Code uses JSON `servers`; OpenCode uses JSON/JSONC `mcp` with a command array; the other adapters use JSON `mcpServers`. Adapter tests do not prove real harness UI integration.
 
-For Codex, run setup and confirm Codex when detected, or use `setup --harness codex` and confirm it. The wizard handles global/project `config.toml`, respects `CODEX_HOME`, and preserves existing settings with a backup.
+## Setup for each harness
 
-See [installation and per-harness configuration](docs/install.md) for exact paths, manual examples, vendor references, local package use, and future registry commands.
+Each command opens the wizard. Confirm the harness, choose the destination config, select a stdio MCP backend and its arguments, choose `redact` or `block`, and name the MCP entry. For Oracle, select **Oracle SQLcl MCP** and an optional saved SQLcl connection. Other databases require a separately installed compatible stdio MCP backend.
 
-For OpenCode, use `dataveil setup --harness opencode`. Setup detects inherited `OPENCODE`/`OPENCODE_PID` session markers and asks for confirmation. Choose global or project `opencode.json`/`opencode.jsonc`, or an inherited `OPENCODE_CONFIG` path. Existing comments and unrelated entries are preserved.
+| Harness | Command from the repository root | Destination to choose |
+| --- | --- | --- |
+| Codex CLI | `node ./dataveil-mcp-proxy/src/index.js setup --harness codex` | Global `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`) or project `.codex/config.toml`. |
+| OpenCode | `node ./dataveil-mcp-proxy/src/index.js setup --harness opencode` | Global `~/.config/opencode/opencode.json` / `opencode.jsonc` (respects `XDG_CONFIG_HOME`), project `opencode.json` / `opencode.jsonc`, or an inherited `OPENCODE_CONFIG` path. |
+| Claude Desktop | `node ./dataveil-mcp-proxy/src/index.js setup --harness claude-desktop` | macOS `~/Library/Application Support/Claude/claude_desktop_config.json`; Windows `%APPDATA%/Claude/claude_desktop_config.json`; enter an explicit path elsewhere. |
+| Cursor | `node ./dataveil-mcp-proxy/src/index.js setup --harness cursor` | Global `~/.cursor/mcp.json` or project `.cursor/mcp.json`. |
+| Legacy Windsurf | `node ./dataveil-mcp-proxy/src/index.js setup --harness windsurf` | Existing `~/.codeium/windsurf/mcp_config.json`, or enter the config path shown by the application's MCP UI. |
+| VS Code | `node ./dataveil-mcp-proxy/src/index.js setup --harness vscode` | Project `.vscode/mcp.json`. |
+| Cline | `node ./dataveil-mcp-proxy/src/index.js setup --harness cline --config /absolute/path/to/cline_mcp_settings.json` | Open Cline's MCP configuration UI to find its settings file, then replace the placeholder with that path. |
+| Pi | `node ./dataveil-mcp-proxy/src/index.js setup --harness pi` | Global `~/.pi/agent/mcp.json` or project `.pi/mcp.json`. |
+| Generic stdio MCP client | `node ./dataveil-mcp-proxy/src/index.js setup --harness generic --config /absolute/path/to/mcp.json` | Replace the placeholder with your client's config path; this adapter expects a JSON `mcpServers` section. |
+
+Project destinations are relative to the directory where you run setup. When running from this checkout, use `--config /absolute/path/to/your-project/config-file` to target another project. Add `--config /absolute/path/to/config-file` to override any native destination. OpenCode preserves JSONC comments and unrelated entries; Codex preserves TOML setting values and backs up the original comments/formatting.
+
+To configure another harness, rerun its command and choose an existing **Shared DataVeil connection**. Setup retains earlier registrations so all configured harnesses can use the same backend settings and policy simultaneously. Use the same `--settings /absolute/path/to/dataveil/config.json` on each run if you override the default shared file.
+
+Restart or reload the configured harness to connect. For Codex, inspect the generated entry with `codex mcp get database --json` (replace `database` with your entry name); for OpenCode, run `opencode mcp list`. In the other harnesses, inspect their MCP server/tool list after reloading. A saved registration alone does not verify live protection. Inspect all saved registrations with:
+
+```sh
+node ./dataveil-mcp-proxy/src/index.js status
+```
+
+After installing the local standalone package above, replace `node ./dataveil-mcp-proxy/src/index.js` in these commands with `dataveil`. Pi users can also load `pi --extension ./extensions/dataveil.ts` from the checkout and run `/dataveil setup` inside Pi.
+
+See [installation and per-harness configuration](docs/install.md) for manual examples and vendor references.
 
 ## Supported harnesses and databases
 
