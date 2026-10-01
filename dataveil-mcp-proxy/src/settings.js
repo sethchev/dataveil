@@ -1,14 +1,19 @@
 import { readFileSync, lstatSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
-import { join, resolve, isAbsolute } from 'node:path';
+import { join, resolve, isAbsolute, dirname } from 'node:path';
 
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const namePattern = /^[A-Za-z0-9_-]+$/;
 
-export function settingsPath(env = process.env) {
+export function settingsPath(env = process.env, harnessKey) {
   if (env.DATAVEIL_CONFIG_FILE) return resolve(env.DATAVEIL_CONFIG_FILE);
   const base = platform() === 'win32' ? env.APPDATA || join(homedir(), 'AppData', 'Roaming') : env.XDG_CONFIG_HOME || join(homedir(), '.config');
-  return join(base, 'dataveil', 'config.json');
+  if (harnessKey && !['pi', 'opencode', 'codex'].includes(harnessKey)) throw new Error(`Unknown harness: ${harnessKey}`);
+  return harnessKey ? join(base, 'dataveil', harnessKey, 'config.json') : join(base, 'dataveil', 'config.json');
+}
+
+export function profilesPath(env = process.env, harnessKey) {
+  return resolve(env.DATAVEIL_PROFILES_FILE ?? join(dirname(settingsPath(env, harnessKey)), 'profiles.json'));
 }
 
 export function validateSettings(config) {

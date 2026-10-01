@@ -1,12 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
+import { profilesPath } from './settings.js';
 
-const DEFAULT_PROFILES_FILE = join(homedir(), '.config', 'dataveil', 'profiles.json');
-
-function profilePath(env = process.env) {
-  return resolve(env.DATAVEIL_PROFILES_FILE ?? DEFAULT_PROFILES_FILE);
-}
+const DEFAULT_PROFILES_FILE = profilesPath();
 
 function resolveEnvironment(environment = {}) {
   const output = {};
@@ -49,7 +45,7 @@ function validateProfile(name, raw) {
 }
 
 export function loadProfiles(env = process.env) {
-  const path = profilePath(env);
+  const path = profilesPath(env);
   if (!existsSync(path)) throw new Error(`DataVeil profiles file was not found: ${path}`);
   let parsed;
   try {

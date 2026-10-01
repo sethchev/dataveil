@@ -14,7 +14,7 @@ const backend = fileURLToPath(new URL('./fixtures/fake-mcp-server.mjs', import.m
 function fixture(t) {
   const cwd = mkdtempSync(join(tmpdir(), 'dataveil-opencode-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
-  return { cwd, configPath: join(cwd, 'opencode.jsonc'), settingsFile: join(cwd, 'shared.json') };
+  return { cwd, configPath: join(cwd, 'opencode.jsonc'), settingsFile: join(cwd, 'settings.json') };
 }
 function ui(values) {
   const take = async (title) => { assert.ok(values.length, title); return values.shift(); };
@@ -45,7 +45,7 @@ test('OpenCode paths and session detection support explicit confirmation', async
   assert.deepEqual(readdirSync(opts.cwd), []);
 });
 
-test('OpenCode saves native command arrays, preserves JSONC comments, and reports shared policy', async (t) => {
+test('OpenCode saves native command arrays, preserves JSONC comments, and reports saved policy', async (t) => {
   const opts = fixture(t); writeFileSync(opts.configPath, original);
   const result = await runConfigure('opencode', { ...opts, ui: ui(responses()) });
   const source = readFileSync(opts.configPath, 'utf8');
@@ -58,7 +58,7 @@ test('OpenCode saves native command arrays, preserves JSONC comments, and report
   assert.equal(readFileSync(result.backupPath, 'utf8'), original);
   assert.deepEqual(result.server.command.slice(2), ['--connection', 'database', '--settings', opts.settingsFile]);
   assert.equal(result.server.type, 'local'); assert.equal(result.server.enabled, true);
-  assert.match(await runStatus({ ...opts, harnessKey: 'opencode', ui: {} }), /database: DataVeil configured; redact mode; shared connection database/);
+  assert.match(await runStatus({ ...opts, harnessKey: 'opencode', ui: {} }), /database: DataVeil configured; redact mode; saved connection database/);
   saved.mcp.database.enabled = false;
   writeFileSync(opts.configPath, JSON.stringify(saved));
   assert.match(await runStatus({ ...opts, harnessKey: 'opencode', ui: {} }), /MCP entry disabled/);

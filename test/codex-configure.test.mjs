@@ -11,7 +11,7 @@ const adapter = harnesses.find((h) => h.key === 'codex');
 function fixture(t) {
   const cwd = mkdtempSync(join(tmpdir(), 'dataveil-codex-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
-  return { cwd, configPath: join(cwd, 'config.toml'), settingsFile: join(cwd, 'shared.json') };
+  return { cwd, configPath: join(cwd, 'config.toml'), settingsFile: join(cwd, 'settings.json') };
 }
 function ui(values, before = () => {}) {
   const take = async (title, options) => { before(title, options); if (title.startsWith('Configure ') && !['Choose another harness', undefined].includes(values[0])) return 'Confirm'; assert.ok(values.length, title); return values.shift(); };
@@ -65,9 +65,9 @@ test('Codex session detection still asks for harness selection; explicit selecti
   const env = { CODEX_THREAD_ID: 'synthetic', CODEX_HOME: opts.cwd };
   const result = await runConfigure(null, { cwd: opts.cwd, env, settingsFile: opts.settingsFile, ui: ui([opts.configPath, ...responses()]) });
   assert.equal(result.harnessKey, 'codex'); assert.equal(result.configPath, opts.configPath);
-  const jsonPath = join(opts.cwd, 'generic.json');
-  const explicit = await runConfigure('generic', { cwd: opts.cwd, configPath: jsonPath, settingsFile: opts.settingsFile, env, ui: ui(['database', 'database', 'Save']) });
-  assert.equal(explicit.harnessKey, 'generic');
+  const jsonPath = join(opts.cwd, 'pi.json');
+  const explicit = await runConfigure('pi', { cwd: opts.cwd, configPath: jsonPath, settingsFile: join(opts.cwd, 'pi-settings.json'), env, ui: ui(responses()) });
+  assert.equal(explicit.harnessKey, 'pi');
   assert.ok(JSON.parse(readFileSync(jsonPath)).mcpServers.database);
   const status = await runStatus({ cwd: opts.cwd, env, settingsFile: opts.settingsFile, harnessKey: 'codex', ui: {} });
   assert.match(status, /database: DataVeil configured/);
@@ -76,7 +76,7 @@ test('Codex session detection still asks for harness selection; explicit selecti
 test('Codex can be selected normally without session markers and chooses project scope', async (t) => {
   const { cwd } = fixture(t);
   const configPath = join(cwd, '.codex', 'config.toml');
-  const result = await runConfigure(null, { cwd, env: {}, settingsFile: join(cwd, 'shared.json'), ui: ui(['Codex CLI', configPath, ...responses()]) });
+  const result = await runConfigure(null, { cwd, env: {}, settingsFile: join(cwd, 'settings.json'), ui: ui(['Codex CLI', configPath, ...responses()]) });
   assert.equal(result.configPath, configPath);
   assert.ok(parse(readFileSync(configPath, 'utf8')).mcp_servers.database);
 });
@@ -139,10 +139,10 @@ test('detected Codex session can select another harness or cancel without writin
   const opts = fixture(t);
   const env = { CODEX_THREAD_ID: 'synthetic' };
   let prompted = false;
-  const result = await runConfigure(null, { ...opts, env, ui: ui(['Choose another harness', 'Generic', ...responses()], (title, choices) => {
+  const result = await runConfigure(null, { ...opts, env, ui: ui(['Choose another harness', 'Pi', ...responses()], (title, choices) => {
     if (title.startsWith('Select your agent harness')) { prompted = true; assert.ok(choices.includes('Codex CLI')); }
   }) });
-  assert.equal(prompted, true); assert.equal(result.harnessKey, 'generic');
+  assert.equal(prompted, true); assert.equal(result.harnessKey, 'pi');
   const original = readFileSync(opts.configPath, 'utf8');
   assert.equal((await runConfigure(null, { ...opts, env, ui: ui([undefined]) })).status, 'cancelled');
   assert.equal(readFileSync(opts.configPath, 'utf8'), original);

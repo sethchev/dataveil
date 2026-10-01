@@ -6,16 +6,20 @@ import { tmpdir } from 'node:os';
 import ts from 'typescript';
 
 // Transpile the actual extension; retain ESM URL resolution using its original location.
-const url = new URL('../extensions/dataveil.ts', import.meta.url);
+const url = new URL('../harnesses/pi/extensions/dataveil.ts', import.meta.url);
 const code = ts.transpileModule(readFileSync(url, 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText
-  .replace("'../dataveil-mcp-proxy/src/configure.js'", JSON.stringify(new URL('../dataveil-mcp-proxy/src/configure.js', import.meta.url).href))
+  .replace("'../../../dataveil-mcp-proxy/src/configure.js'", JSON.stringify(new URL('../dataveil-mcp-proxy/src/configure.js', import.meta.url).href))
+  .replace("'../../../dataveil-mcp-proxy/src/settings.js'", JSON.stringify(new URL('../dataveil-mcp-proxy/src/settings.js', import.meta.url).href))
   .replace('import.meta.url', JSON.stringify(url.href));
 const { default: extension } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
 function fixture(t, values = []) {
   const cwd = mkdtempSync(join(tmpdir(), 'dataveil-pi-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
   const oldConfig = process.env.DATAVEIL_CONFIG_FILE;
-  process.env.DATAVEIL_CONFIG_FILE = join(cwd, 'shared.json');
+  const oldProfiles = process.env.DATAVEIL_PROFILES_FILE;
+  delete process.env.DATAVEIL_PROFILES_FILE;
+  t.after(() => { if (oldProfiles !== undefined) process.env.DATAVEIL_PROFILES_FILE = oldProfiles; else delete process.env.DATAVEIL_PROFILES_FILE; });
+  process.env.DATAVEIL_CONFIG_FILE = join(cwd, 'settings.json');
   t.after(() => { if (oldConfig === undefined) delete process.env.DATAVEIL_CONFIG_FILE; else process.env.DATAVEIL_CONFIG_FILE = oldConfig; });
   const commands = new Map(), registrations = [], notifications = [];
   extension({ registerCommand: (name, command) => commands.set(name, command), registerMcpServer: (...args) => registrations.push(args) });
@@ -48,11 +52,16 @@ test('gateway registration uses absolute launcher and profile path, block policy
   const f = fixture(t);
   await f.run('gateway');
   assert.equal(f.registrations.length, 0);
+  // A project-local profile is not loaded; connections belong to DataVeil.
   writeFileSync(join(f.cwd, 'dataveil-profiles.json'), '{"connections":{}}');
+  await f.run('gateway');
+  assert.equal(f.registrations.length, 0);
+  writeFileSync(join(f.cwd, 'profiles.json'), '{"connections":{}}');
   await f.run('gateway');
   const [name, config] = f.registrations[0];
   assert.equal(name, 'dataveil'); assert.equal(config.command, process.execPath);
   assert.ok(config.args[0].startsWith('/')); assert.equal(config.args[1], '--gateway');
+  assert.equal(config.env.DATAVEIL_PROFILES_FILE, join(f.cwd, 'profiles.json'));
   assert.equal(config.env.DATAVEIL_PII_MODE, 'block'); assert.equal(config.exposure, 'codemode');
   await f.run('unknown'); assert.match(f.notifications.at(-1)[0], /Usage/);
 });

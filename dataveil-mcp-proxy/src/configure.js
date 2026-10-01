@@ -7,106 +7,15 @@ import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { loadSettings, settingsPath, validateSettings } from './settings.js';
-import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
-import { parse as parseJsonc, modify, applyEdits } from 'jsonc-parser';
+import { harnesses, detectHarness } from './harnesses/index.js';
+export { harnesses, detectHarness } from './harnesses/index.js';
 
 const defaultScript = fileURLToPath(new URL('./index.js', import.meta.url));
-const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 const rawClients = new Set(['psql', 'sqlite3', 'mysql', 'mariadb', 'sqlcmd', 'sqlplus']);
 const commandBase = (command) => basename(command).toLowerCase().replace(/\.(exe|cmd|bat)$/, '');
 
-function definition(key, label, paths, field = 'mcpServers', format = 'json') {
-  return {
-    key, label, field, paths, format,
-    detect: (cwd = process.cwd()) => paths(cwd).find(existsSync) ?? null,
-    configPath: (cwd = process.cwd()) => paths(cwd)[0] ?? null,
-    getServers: (cfg) => cfg[field] ?? {},
-    setServers: (cfg, servers) => ({ ...cfg, [field]: servers }),
-  };
-}
-
-// OpenCode stores local launchers as a command array and accepts JSONC.
-const opencode = {
-  ...definition('opencode', 'OpenCode', (cwd, env = process.env) => [
-    ...(env.OPENCODE_CONFIG ? [resolve(cwd, env.OPENCODE_CONFIG)] : []),
-    ...['opencode.json', 'opencode.jsonc'].map((name) => join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode', name)),
-    join(cwd, 'opencode.json'), join(cwd, 'opencode.jsonc'),
-  ], 'mcp', 'jsonc'),
-  createEntry: ({ command, args }) => ({ type: 'local', command: [command, ...args], enabled: true }),
-  normalize: (entry) => ({ ...entry, command: Array.isArray(entry.command) ? entry.command[0] : undefined,
-    args: Array.isArray(entry.command) ? entry.command.slice(1) : [], env: entry.environment }),
-  parse(source) {
-    const errors = [];
-    const config = parseJsonc(source, errors, { allowTrailingComma: true });
-    if (errors.length) throw new Error('Invalid JSONC');
-    return config;
-  },
-  serialize(config, original) {
-    let source = original ?? '{}\n';
-    const previous = this.parse(source).mcp ?? {};
-    // Edit only changed entries, preserving unrelated settings and comments.
-    for (const [name, entry] of Object.entries(config.mcp ?? {})) {
-      if (JSON.stringify(previous[name]) === JSON.stringify(entry)) continue;
-      source = applyEdits(source, modify(source, ['mcp', name], entry, {
-        formattingOptions: { insertSpaces: true, tabSize: 2, eol: '\n' },
-      }));
-    }
-    return source;
-  },
-};
-
-export const harnesses = [
-  opencode,
-  definition('codex', 'Codex CLI', (cwd, env = process.env) => [
-    join(resolve(env.CODEX_HOME || join(homedir(), '.codex')), 'config.toml'),
-    join(cwd, '.codex', 'config.toml'),
-  ], 'mcp_servers', 'toml'),
-  definition('claude-desktop', 'Claude Desktop', () => platform() === 'darwin'
-    ? [join(homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json')]
-    : platform() === 'win32'
-      ? [join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'Claude', 'claude_desktop_config.json')]
-      : []),
-  definition('cursor', 'Cursor', (cwd) => [join(homedir(), '.cursor', 'mcp.json'), join(cwd, '.cursor', 'mcp.json')]),
-  // Legacy Windsurf location only when it exists; current vendor paths have changed.
-  definition('windsurf', 'Windsurf (explicit path recommended)', () => {
-    const legacy = join(homedir(), '.codeium', 'windsurf', 'mcp_config.json');
-    return existsSync(legacy) ? [legacy] : [];
-  }),
-  definition('vscode', 'VS Code', (cwd) => [join(cwd, '.vscode', 'mcp.json')], 'servers'),
-  // Cline storage depends on the editor, profile and installation. Never guess it.
-  definition('cline', 'Cline (explicit config path)', () => []),
-  definition('generic', 'Generic', (cwd) => [join(cwd, 'mcp.json')]),
-  definition('pi', 'Pi', (cwd) => [join(homedir(), '.pi', 'agent', 'mcp.json'), join(cwd, '.pi', 'mcp.json')]),
-];
-
-function validateConfig(config, harness) {
-  if (harness.validate) return harness.validate(config);
-  if (!object(config)) throw new Error('Config must be an object');
-  if (own(config, harness.field) && !object(config[harness.field])) {
-    throw new Error(`${harness.field} must be an object`);
-  }
-  for (const otherField of ['mcpServers', 'servers', 'mcp_servers', 'mcp'].filter((field) => field !== harness.field)) {
-    if (own(config, otherField)) throw new Error(`Wrong MCP schema: expected ${harness.field}, not ${otherField}`);
-  }
-  for (const [name, server] of Object.entries(harness.getServers(config))) {
-    if (!object(server)) throw new Error(`Invalid server entry: ${name}`);
-    if (harness.key === 'opencode') {
-      if (server.enabled !== undefined && typeof server.enabled !== 'boolean') throw new Error(`Invalid enabled flag: ${name}`);
-      if (server.type === undefined && Object.keys(server).every((key) => key === 'enabled') && own(server, 'enabled')) continue;
-      if (!['local', 'remote'].includes(server.type)) throw new Error(`Invalid OpenCode server type: ${name}`);
-      if (server.type === 'local' && (!Array.isArray(server.command) || !server.command.length || server.command.some((arg) => typeof arg !== 'string') || !server.command[0].trim())) throw new Error(`Invalid command array: ${name}`);
-      if (server.type === 'remote' && (typeof server.url !== 'string' || !server.url.trim())) throw new Error(`Missing remote URL: ${name}`);
-      if (server.environment !== undefined && (!object(server.environment) || Object.values(server.environment).some((value) => typeof value !== 'string'))) throw new Error(`Invalid environment: ${name}`);
-      if (server.args !== undefined || server.env !== undefined) throw new Error(`Wrong OpenCode launcher schema: ${name}`);
-      continue;
-    }
-    if (server.command !== undefined && (typeof server.command !== 'string' || !server.command.trim())) throw new Error(`Invalid command: ${name}`);
-    if (server.args !== undefined && (!Array.isArray(server.args) || server.args.some((arg) => typeof arg !== 'string'))) throw new Error(`Invalid args: ${name}`);
-    if (server.env !== undefined && (!object(server.env) || Object.values(server.env).some((value) => typeof value !== 'string'))) throw new Error(`Invalid env: ${name}`);
-    if (!server.command && typeof server.url !== 'string' && typeof server.serverUrl !== 'string') throw new Error(`Missing command or URL: ${name}`);
-  }
-}
+function validateConfig(config, harness) { harness.validate(config); }
 
 function loadConfig(path, harness) {
   let original = null;
@@ -118,7 +27,7 @@ function loadConfig(path, harness) {
     if (error.code !== 'ENOENT') throw error;
   }
   let config;
-  try { config = original === null ? harness.empty?.() ?? {} : harness.parse ? harness.parse(original) : harness.format === 'toml' ? parseToml(original) : JSON.parse(original); }
+  try { config = original === null ? harness.empty?.() ?? {} : harness.parse ? harness.parse(original) : JSON.parse(original); }
   catch { throw new Error(`Malformed ${harness.format === 'toml' ? 'TOML' : harness.format === 'jsonc' ? 'JSONC' : 'JSON'} config: ${path}. Refusing to overwrite it.`); }
   validateConfig(config, harness);
   return { config, original };
@@ -130,7 +39,7 @@ function atomicSave(path, config, original, harness, source) {
   let backupPath = null;
   try {
     const fd = openSync(temp, 'wx', 0o600);
-    try { writeFileSync(fd, source ?? (harness.serialize ? harness.serialize(config, original) : harness.format === 'toml' ? stringifyToml(config) : JSON.stringify(config, null, 2) + '\n')); fsyncSync(fd); }
+    try { writeFileSync(fd, source ?? (harness.serialize ? harness.serialize(config, original) : JSON.stringify(config, null, 2) + '\n')); fsyncSync(fd); }
     finally { closeSync(fd); }
     // Detect edits made while the wizard was open rather than clobbering them.
     if (loadConfig(path, harness).original !== original) throw new Error('Config changed during setup; retry configuration');
@@ -227,45 +136,35 @@ function savedConnections(command) {
     .filter((line) => /^[\w][\w.-]*$/.test(line) && !/^(connections?|name|sql)$/i.test(line)))];
 }
 
-export function detectHarness(env = process.env) {
-  if (env.CODEX_THREAD_ID || env.CODEX_SESSION_ID) return 'codex';
-  if (env.OPENCODE === '1' || env.OPENCODE_PID) return 'opencode';
-  const terminal = String(env.TERM_PROGRAM ?? '').toLowerCase();
-  if (terminal === 'cursor' || env.CURSOR_TRACE_ID) return 'cursor';
-  if (terminal === 'windsurf') return 'windsurf';
-  if (terminal === 'vscode' || env.VSCODE_PID) return 'vscode';
-  return null;
-}
-
-const sharedDefinition = {
+const settingsDefinition = {
   format: 'json', validate: validateSettings,
   empty: () => ({ version: 1, connections: {}, harnesses: [] }),
 };
 
-// Serialize setup writers and roll back shared settings if the native write fails.
+// Serialize setup writers and roll back DataVeil settings if the native write fails.
 // All prompts finish before acquiring the lock or modifying either file.
-function saveRegistration(sharedPath, sharedConfig, sharedOriginal, path, nativeConfig, nativeOriginal, harness) {
-  if (sharedPath === path) throw new Error('Harness config and DataVeil settings must use different files');
-  mkdirSync(dirname(sharedPath), { recursive: true });
-  const lockPath = `${sharedPath}.lock`;
+function saveRegistration(settingsFilePath, settingsConfig, settingsOriginal, path, nativeConfig, nativeOriginal, harness) {
+  if (settingsFilePath === path) throw new Error('Harness config and DataVeil settings must use different files');
+  mkdirSync(dirname(settingsFilePath), { recursive: true });
+  const lockPath = `${settingsFilePath}.lock`;
   let lock;
   try { lock = openSync(lockPath, 'wx', 0o600); }
   catch (error) {
     if (error.code === 'EEXIST') throw new Error('Another DataVeil setup is saving settings; retry after it finishes');
     throw error;
   }
-  let sharedBackupPath;
+  let settingsBackupPath;
   try {
-    if (loadConfig(sharedPath, sharedDefinition).original !== sharedOriginal || loadConfig(path, harness).original !== nativeOriginal) throw new Error('Config changed during setup; retry configuration');
-    sharedBackupPath = atomicSave(sharedPath, sharedConfig, sharedOriginal, sharedDefinition);
+    if (loadConfig(settingsFilePath, settingsDefinition).original !== settingsOriginal || loadConfig(path, harness).original !== nativeOriginal) throw new Error('Config changed during setup; retry configuration');
+    settingsBackupPath = atomicSave(settingsFilePath, settingsConfig, settingsOriginal, settingsDefinition);
     try {
       const backupPath = atomicSave(path, nativeConfig, nativeOriginal, harness);
-      return { backupPath, sharedBackupPath };
+      return { backupPath, settingsBackupPath };
     } catch (error) {
-      const written = JSON.stringify(sharedConfig, null, 2) + '\n';
-      if (loadConfig(sharedPath, sharedDefinition).original !== written) throw new Error(`Harness save failed and shared settings changed before rollback: ${error.message}`);
-      if (sharedOriginal === null) unlinkSync(sharedPath);
-      else atomicSave(sharedPath, JSON.parse(sharedOriginal), written, sharedDefinition, sharedOriginal);
+      const written = JSON.stringify(settingsConfig, null, 2) + '\n';
+      if (loadConfig(settingsFilePath, settingsDefinition).original !== written) throw new Error(`Harness save failed and DataVeil settings changed before rollback: ${error.message}`);
+      if (settingsOriginal === null) unlinkSync(settingsFilePath);
+      else atomicSave(settingsFilePath, JSON.parse(settingsOriginal), written, settingsDefinition, settingsOriginal);
       throw error;
     }
   } finally { closeSync(lock); unlinkSync(lockPath); }
@@ -304,8 +203,11 @@ export async function runConfigure(harnessKey = null, { scriptPath = defaultScri
     }
     harnessKey = candidate;
     const harness = harnesses.find((h) => h.key === harnessKey);
-    const sharedPath = resolve(cwd, settingsFile ?? settingsPath(env));
-    const shared = loadConfig(sharedPath, sharedDefinition);
+    const settingsFilePath = resolve(cwd, settingsFile ?? settingsPath(env, harnessKey));
+    const saved = loadConfig(settingsFilePath, settingsDefinition);
+    if (saved.config.harnesses.some((entry) => entry.harnessKey !== harnessKey)) {
+      throw new Error(`${harness.label} requires its own DataVeil settings file; choose a separate --settings path`);
+    }
     let target = configPath;
     if (!target) {
       const paths = harness.paths(cwd, env);
@@ -316,12 +218,12 @@ export async function runConfigure(harnessKey = null, { scriptPath = defaultScri
     }
     const path = resolve(cwd, target);
     const { config, original } = loadConfig(path, harness);
-    if (path === sharedPath) throw new Error('Harness config and DataVeil settings must use different files');
+    if (path === settingsFilePath) throw new Error('Harness config and DataVeil settings must use different files');
     let connectionName;
     let command, args, mode;
-    const existingNames = Object.keys(shared.config.connections);
+    const existingNames = Object.keys(saved.config.connections);
     if (existingNames.length) {
-      const choice = await select('Shared DataVeil connection', [...existingNames, 'Add a new connection']);
+      const choice = await select('Saved DataVeil connection', [...existingNames, 'Add a new connection']);
       if (choice !== 'Add a new connection') connectionName = choice;
     }
     if (!connectionName) {
@@ -361,7 +263,7 @@ export async function runConfigure(harnessKey = null, { scriptPath = defaultScri
       }
       mode = await select('Privacy mode', ['redact', 'block']);
     } else {
-      ({ command, args, mode } = shared.config.connections[connectionName]);
+      ({ command, args, mode } = saved.config.connections[connectionName]);
     }
     const servers = harness.getServers(config);
     let name;
@@ -371,27 +273,26 @@ export async function runConfigure(harnessKey = null, { scriptPath = defaultScri
     if (own(servers, name) && await select(`Replace existing entry ${name}?`, ['Keep existing (cancel)', 'Replace']) !== 'Replace') throw cancelled;
     if (!connectionName) {
       connectionName = name;
-      if (own(shared.config.connections, connectionName) && await select(`Replace shared connection ${connectionName}? All registered harnesses will use the new settings after reconnecting.`, ['Keep existing (cancel)', 'Replace']) !== 'Replace') throw cancelled;
+      if (own(saved.config.connections, connectionName) && await select(`Replace saved connection ${connectionName}? Registrations using this settings file will use the new settings after reconnecting.`, ['Keep existing (cancel)', 'Replace']) !== 'Replace') throw cancelled;
     }
     const launcher = {
-      ...(harness.field === 'servers' ? { type: 'stdio' } : {}),
       command: nodeExecutable(cwd),
-      args: [resolve(cwd, scriptPath || defaultScript), '--connection', connectionName, '--settings', sharedPath],
+      args: [resolve(cwd, scriptPath || defaultScript), '--connection', connectionName, '--settings', settingsFilePath],
     };
     const entry = harness.createEntry ? harness.createEntry(launcher) : launcher;
-    const sharedConfig = {
-      ...shared.config,
-      connections: { ...shared.config.connections, [connectionName]: { command, args, mode } },
+    const settingsConfig = {
+      ...saved.config,
+      connections: { ...saved.config.connections, [connectionName]: { command, args, mode } },
       harnesses: [
-        ...shared.config.harnesses.filter((registration) => registration.configPath !== path || registration.name !== name),
+        ...saved.config.harnesses.filter((registration) => registration.configPath !== path || registration.name !== name),
         { harnessKey, configPath: path, name, connection: connectionName },
       ],
     };
-    validateSettings(sharedConfig);
-    if (await select(`Save ${name} to ${path} and shared settings ${sharedPath}?`, ['Save', 'Cancel']) !== 'Save') throw cancelled;
-    const backups = saveRegistration(sharedPath, sharedConfig, shared.original, path, harness.setServers(config, { ...servers, [name]: entry }), original, harness);
-    const result = { status: 'configured', harnessKey, configPath: path, settingsFile: sharedPath, connectionName, name, server: entry, ...backups };
-    if (terminal) console.log(`DataVeil configured: ${name} → shared connection ${connectionName}\nHarness config: ${path}\nShared settings: ${sharedPath}\nRestart/reload your client to connect. Live protection has not been verified.`);
+    validateSettings(settingsConfig);
+    if (await select(`Save ${name} to ${path} and DataVeil settings ${settingsFilePath}?`, ['Save', 'Cancel']) !== 'Save') throw cancelled;
+    const backups = saveRegistration(settingsFilePath, settingsConfig, saved.original, path, harness.setServers(config, { ...servers, [name]: entry }), original, harness);
+    const result = { status: 'configured', harnessKey, configPath: path, settingsFile: settingsFilePath, connectionName, name, server: entry, ...backups };
+    if (terminal) console.log(`DataVeil configured: ${name} → saved connection ${connectionName}\nHarness config: ${path}\nDataVeil settings: ${settingsFilePath}\nRestart/reload your client to connect. Live protection has not been verified.`);
     return result;
   } catch (error) {
     if (error === cancelled) return { status: 'cancelled' };
@@ -418,7 +319,8 @@ export function formatStatusText(snapshots, { scriptPath = defaultScript } = {})
   for (const snapshot of snapshots) {
     lines.push(`\n${snapshot.label ?? snapshot.harnessKey ?? 'MCP'}: ${snapshot.configPath}`);
     if (snapshot.error) { lines.push(`  Invalid config: ${snapshot.error}`); continue; }
-    const harness = harnesses.find((h) => h.key === snapshot.harnessKey) ?? harnesses.find((h) => h.key === 'generic');
+    const harness = harnesses.find((h) => h.key === snapshot.harnessKey);
+    if (!harness) { lines.push('  Unsupported harness'); continue; }
     try { validateConfig(snapshot.config, harness); }
     catch (error) { lines.push(`  Invalid config: ${error.message}`); continue; }
     for (const [name, nativeEntry] of Object.entries(harness.getServers(snapshot.config))) {
@@ -436,18 +338,18 @@ export function formatStatusText(snapshots, { scriptPath = defaultScript } = {})
         else if (arg === '--gateway') gateway = true;
         else if (['--arg', '--sqlcl-arg', '--command', '--sqlcl', '--max-message-bytes', '--backend-timeout-ms'].includes(arg)) i++;
       }
-      let sharedMode;
+      let savedMode;
       if (connection) {
         try {
           const settings = loadSettings(file);
-          if (!own(settings.connections, connection)) throw new Error(`Unknown shared connection: ${connection}`);
-          sharedMode = settings.connections[connection].mode;
-        } catch (error) { lines.push(`  ${name}: DataVeil configured; invalid shared settings: ${error.message}`); continue; }
+          if (!own(settings.connections, connection)) throw new Error(`Unknown saved connection: ${connection}`);
+          savedMode = settings.connections[connection].mode;
+        } catch (error) { lines.push(`  ${name}: DataVeil configured; invalid DataVeil settings: ${error.message}`); continue; }
       }
-      const mode = cliMode ?? server.env?.DATAVEIL_PII_MODE ?? sharedMode ?? (gateway ? 'block' : 'redact');
+      const mode = cliMode ?? server.env?.DATAVEIL_PII_MODE ?? savedMode ?? (gateway ? 'block' : 'redact');
       const disabled = gateway && ['0', 'false', 'off', 'no'].includes(String(server.env?.DATAVEIL_ENABLED ?? 'true').toLowerCase());
       const entryDisabled = server.enabled === false || server.disabled === true;
-      lines.push(`  ${name}: DataVeil configured; ${disabled ? `protection disabled (DATAVEIL_ENABLED=${server.env.DATAVEIL_ENABLED})` : `${mode} mode`}${connection ? `; shared connection ${connection}` : ''}${entryDisabled ? '; MCP entry disabled' : ''}`);
+      lines.push(`  ${name}: DataVeil configured; ${disabled ? `protection disabled (DATAVEIL_ENABLED=${server.env.DATAVEIL_ENABLED})` : `${mode} mode`}${connection ? `; saved connection ${connection}` : ''}${entryDisabled ? '; MCP entry disabled' : ''}`);
     }
   }
   lines.push(`\nSummary: ${count} DataVeil configured entry(s). Runtime connection and protection have not been verified.`);
@@ -460,13 +362,13 @@ export async function runStatus({ harnessKey, configPath, cwd = process.cwd(), s
   if (!selected.length) throw new Error(`Unknown harness: ${harnessKey}`);
   if (configPath && !harnessKey) throw new Error('configPath requires harnessKey');
   const snapshots = [];
-  let registrations = [];
-  const sharedPath = resolve(cwd, settingsFile ?? settingsPath(env));
-  if (existsSync(sharedPath)) {
-    try { registrations = loadSettings(sharedPath).harnesses; }
-    catch (error) { snapshots.push({ label: 'Shared DataVeil settings', configPath: sharedPath, error: error.message }); }
-  }
   for (const harness of selected) {
+    let registrations = [];
+    const settingsFilePath = resolve(cwd, settingsFile ?? settingsPath(env, harness.key));
+    if (existsSync(settingsFilePath)) {
+      try { registrations = loadSettings(settingsFilePath).harnesses; }
+      catch (error) { snapshots.push({ label: `${harness.label} DataVeil settings`, configPath: settingsFilePath, error: error.message }); }
+    }
     const paths = configPath ? [resolve(cwd, configPath)] : [...harness.paths(cwd, env).filter(existsSync), ...registrations.filter((entry) => entry.harnessKey === harness.key).map((entry) => entry.configPath)];
     for (const path of new Set(paths)) {
       try { snapshots.push({ harnessKey: harness.key, label: harness.label, configPath: path, config: loadConfig(path, harness).config }); }

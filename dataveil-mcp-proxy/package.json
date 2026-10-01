@@ -22,7 +22,7 @@
     "src/**/*.js"
   ],
   "scripts": {
-    "build": "node --check src/index.js && node --check src/proxy.js && node --check src/redact.js && node --check src/gateway.js && node --check src/profiles.js && node --check src/configure.js && node --check src/settings.js",
+    "build": "node --check src/index.js && node --check src/proxy.js && node --check src/redact.js && node --check src/gateway.js && node --check src/profiles.js && node --check src/configure.js && node --check src/settings.js && node --check src/harnesses/common.js && node --check src/harnesses/index.js && node --check src/harnesses/pi.js && node --check src/harnesses/opencode.js && node --check src/harnesses/codex.js",
     "test": "node --test ../test/*.test.mjs"
   },
   "repository": {

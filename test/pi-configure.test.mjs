@@ -8,7 +8,7 @@ import { executable, nodeExecutable, harnesses, runConfigure, runStatus, formatS
 function fixture(t) {
   const cwd = mkdtempSync(join(tmpdir(), 'dataveil-config-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
-  return { cwd, configPath: join(cwd, 'mcp.json'), settingsFile: join(cwd, 'shared.json') };
+  return { cwd, configPath: join(cwd, 'mcp.json'), settingsFile: join(cwd, 'settings.json') };
 }
 function answers(values, before = () => {}) {
   const take = async (title, options) => { before(title, options); if (title.startsWith('Configure ')) return 'Confirm'; assert.ok(values.length, `Unexpected prompt: ${title}`); return values.shift(); };
@@ -31,7 +31,6 @@ for (const harness of harnesses.filter((h) => h.format === 'json')) {
     assert.ok(result.server.args[0].startsWith('/'));
     assert.deepEqual(result.server.args.slice(1), ['--connection', 'database', '--settings', opts.settingsFile]);
     assert.deepEqual(JSON.parse(readFileSync(opts.settingsFile)).connections.database, { command: process.execPath, args: ['arbitrary arg', '--flag'], mode: 'redact' });
-    if (harness.key === 'vscode') assert.equal(result.server.type, 'stdio');
     if (process.platform !== 'win32') {
       assert.equal(statSync(opts.configPath).mode & 0o777, 0o600);
       assert.equal(statSync(result.backupPath).mode & 0o777, 0o600);
@@ -42,11 +41,11 @@ for (const harness of harnesses.filter((h) => h.format === 'json')) {
 test('cancellation at every backend/setup prompt leaves no files', async (t) => {
   for (let index = 0; index < custom().length; index++) {
     const opts = fixture(t);
-    const result = await runConfigure('generic', { ...opts, ui: answers([...custom().slice(0, index), undefined]) });
+    const result = await runConfigure('pi', { ...opts, ui: answers([...custom().slice(0, index), undefined]) });
     assert.equal(result.status, 'cancelled');
     assert.deepEqual(readdirSync(opts.cwd), []);
   }
-  for (const values of [[undefined], ['Generic', undefined], ['Generic', 'Enter an explicit config path', undefined]]) {
+  for (const values of [[undefined], ['Pi', undefined], ['Pi', 'Enter an explicit config path', undefined]]) {
     const opts = fixture(t);
     assert.equal((await runConfigure(null, { cwd: opts.cwd, env: {}, ui: answers(values) })).status, 'cancelled');
     assert.deepEqual(readdirSync(opts.cwd), []);
@@ -58,24 +57,24 @@ test('duplicates require explicit replacement and cancellation preserves origina
   const original = JSON.stringify({ mcpServers: { database: { command: 'old' } } });
   writeFileSync(opts.configPath, original);
   for (const response of [undefined, 'Keep existing (cancel)']) {
-    assert.equal((await runConfigure('generic', { ...opts, ui: answers([...custom().slice(0, -1), response]) })).status, 'cancelled');
+    assert.equal((await runConfigure('pi', { ...opts, ui: answers([...custom().slice(0, -1), response]) })).status, 'cancelled');
     assert.equal(readFileSync(opts.configPath, 'utf8'), original);
   }
-  assert.equal((await runConfigure('generic', { ...opts, ui: answers([...custom().slice(0, -1), 'Replace', 'Save']) })).status, 'configured');
+  assert.equal((await runConfigure('pi', { ...opts, ui: answers([...custom().slice(0, -1), 'Replace', 'Save']) })).status, 'configured');
 });
 
 test('malformed JSON and invalid schemas cannot be overwritten', async (t) => {
   const opts = fixture(t);
   for (const original of ['{', '[]', '{"mcpServers":[]}', '{"servers":{}}', '{"mcpServers":{"bad":{"args":[1],"command":"x"}}}']) {
     writeFileSync(opts.configPath, original);
-    await assert.rejects(runConfigure('generic', { ...opts, ui: answers([]) }));
+    await assert.rejects(runConfigure('pi', { ...opts, ui: answers([]) }));
     assert.equal(readFileSync(opts.configPath, 'utf8'), original);
   }
 });
 
 test('detects concurrent edits rather than overwriting', async (t) => {
   const opts = fixture(t);
-  await assert.rejects(runConfigure('generic', { ...opts, ui: answers(custom(), (title) => {
+  await assert.rejects(runConfigure('pi', { ...opts, ui: answers(custom(), (title) => {
     if (title.startsWith('Save ')) writeFileSync(opts.configPath, '{"changed":true}');
   }) }), /changed during setup/);
   assert.equal(readFileSync(opts.configPath, 'utf8'), '{"changed":true}');
@@ -95,16 +94,9 @@ test('PATH lookup uses inherited paths, rejects non-executable files and directo
 
 test('raw database clients are rejected; SQLcl permits manual punctuation and spaces', async (t) => {
   const opts = fixture(t);
-  await assert.rejects(runConfigure('generic', { ...opts, ui: answers(['Other database / custom MCP', 'Installed stdio MCP executable', 'psql']) }), /not a stdio MCP backend/);
-  const result = await runConfigure('generic', { ...opts, env: { PATH: '', HOME: opts.cwd, DATAVEIL_SQLCL: process.execPath }, ui: answers(['Oracle SQLcl MCP', 'Type a saved connection name', 'demo: saved connection!', 'block', 'database', 'Save']) });
+  await assert.rejects(runConfigure('pi', { ...opts, ui: answers(['Other database / custom MCP', 'Installed stdio MCP executable', 'psql']) }), /not a stdio MCP backend/);
+  const result = await runConfigure('pi', { ...opts, env: { PATH: '', HOME: opts.cwd, DATAVEIL_SQLCL: process.execPath }, ui: answers(['Oracle SQLcl MCP', 'Type a saved connection name', 'demo: saved connection!', 'block', 'database', 'Save']) });
   assert.deepEqual(JSON.parse(readFileSync(opts.settingsFile)).connections.database.args, ['-name', 'demo: saved connection!', '-mcp']);
-});
-
-test('Cline and unverified locations require explicit user path; cancellation never guesses', async (t) => {
-  const { cwd } = fixture(t);
-  assert.deepEqual(harnesses.find((h) => h.key === 'cline').paths(cwd), []);
-  assert.equal((await runConfigure('cline', { cwd, ui: answers([undefined]) })).status, 'cancelled');
-  assert.equal(existsSync(join(cwd, '.vscode', 'mcp.json')), false);
 });
 
 test('status describes configuration, CLI policy precedence, gateway defaults and disabled entries', async (t) => {
@@ -116,14 +108,14 @@ test('status describes configuration, CLI policy precedence, gateway defaults an
     raw: { command: 'backend' },
     backendFlags: { command: 'dataveil', args: ['--arg', '--gateway', '--arg', '--mode', '--arg', 'block'] }
   } }));
-  const result = await runStatus({ ...opts, harnessKey: 'generic', ui: {} });
+  const result = await runStatus({ ...opts, harnessKey: 'pi', ui: {} });
   assert.match(result, /gateway: DataVeil configured; block mode/);
   assert.match(result, /protection disabled/);
   assert.match(result, /override: DataVeil configured; block mode; MCP entry disabled/);
   assert.match(result, /backendFlags: DataVeil configured; redact mode/);
   assert.match(result, /not live protection/);
   assert.match(result, /raw: not configured through DataVeil/);
-  assert.match(formatStatusText([{ configPath: opts.configPath, config: [] }]), /Invalid config/);
+  assert.match(formatStatusText([{ harnessKey: 'pi', configPath: opts.configPath, config: [] }]), /Invalid config/);
 });
 
 

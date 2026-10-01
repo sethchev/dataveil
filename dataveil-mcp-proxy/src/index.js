@@ -16,12 +16,12 @@ Usage: dataveil [proxy options]
        dataveil status [--harness NAME] [--config FILE] [--settings FILE]
 
 Setup is interactive. --config overrides the prompted destination.
-Harnesses: opencode, codex, claude-desktop, cursor, windsurf, vscode, cline, pi, generic.
+Harnesses: pi, opencode, codex.
 The dataveil-gateway executable defaults to gateway mode.
 
 Options:
-  --connection NAME         Launch a connection from shared DataVeil settings
-  --settings FILE           Shared settings file (default: user DataVeil config)
+  --connection NAME         Launch a connection from saved DataVeil settings
+  --settings FILE           Settings file (setup defaults to a separate file per harness)
   --command PATH            MCP backend command to launch
   --arg ARG                 Backend argument; repeat as needed
   --mode redact|block       Redact fields or block sensitive tool results
@@ -36,7 +36,7 @@ Backward-compatible Oracle SQLcl options:
   --sqlcl-arg ARG           Alias for --arg
 
 Environment:
-  DATAVEIL_CONFIG_FILE      Shared DataVeil settings file
+  DATAVEIL_CONFIG_FILE      DataVeil settings file override
   DATAVEIL_COMMAND          MCP backend command
   DATAVEIL_PII_MODE         redact (default) or block
   DATAVEIL_SQLCL            Backward-compatible SQLcl command

@@ -1,10 +1,10 @@
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { profilesPath } from '../../../dataveil-mcp-proxy/src/settings.js';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { nodeExecutable, runConfigure, runStatus } from '../dataveil-mcp-proxy/src/configure.js';
+import { nodeExecutable, runConfigure, runStatus } from '../../../dataveil-mcp-proxy/src/configure.js';
 
-const scriptPath = fileURLToPath(new URL('../dataveil-mcp-proxy/src/index.js', import.meta.url));
+const scriptPath = fileURLToPath(new URL('../../../dataveil-mcp-proxy/src/index.js', import.meta.url));
 
 export default function dataveilExtension(pi: ExtensionAPI) {
   pi.registerCommand('dataveil', {
@@ -24,12 +24,12 @@ export default function dataveilExtension(pi: ExtensionAPI) {
         } else if (action === 'status') {
           ctx.ui.notify(await runStatus({ harnessKey: 'pi', scriptPath, cwd: ctx.cwd, ui }), 'info');
         } else if (action === 'gateway') {
-          const profilesPath = join(ctx.cwd, 'dataveil-profiles.json');
-          if (!existsSync(profilesPath)) throw new Error(`Create ${profilesPath} with named stdio MCP backends first`);
+          const profilesFile = profilesPath(process.env, 'pi');
+          if (!existsSync(profilesFile)) throw new Error(`Create ${profilesFile} with named stdio MCP backends first`);
           pi.registerMcpServer('dataveil', {
             command: nodeExecutable(ctx.cwd),
             args: [scriptPath, '--gateway'],
-            env: { DATAVEIL_PROFILES_FILE: profilesPath, DATAVEIL_PII_MODE: 'block', DATAVEIL_ENABLED: 'true' },
+            env: { DATAVEIL_PROFILES_FILE: profilesFile, DATAVEIL_PII_MODE: 'block', DATAVEIL_ENABLED: 'true' },
             exposure: 'codemode',
           });
           ctx.ui.notify('DataVeil gateway registered for this session. Use dataveil_connect to select a profile and dataveil_status to inspect routing and policy.', 'info');

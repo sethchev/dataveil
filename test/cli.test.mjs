@@ -7,11 +7,11 @@ const run = (args, input = '') => spawnSync(process.execPath, [script, ...args],
 
 test('help, setup dispatch, alias dispatch, status, missing values and incompatible options', () => {
   assert.match(run(['--help']).stdout, /dataveil setup/);
-  for (const args of [['setup', '--harness', 'generic'], ['--configure', '--harness', 'generic']]) {
+  for (const args of [['setup', '--harness', 'pi'], ['--configure', '--harness', 'pi']]) {
     const result = run(args); assert.equal(result.status, 1); assert.match(result.stderr, /interactive terminal/); assert.equal(result.stdout, '');
   }
-  assert.equal(run(['status', '--harness', 'generic']).status, 0);
-  assert.match(run(['status', '--harness', 'generic']).stdout, /not live protection/);
+  assert.equal(run(['status', '--harness', 'pi']).status, 0);
+  assert.match(run(['status', '--harness', 'pi']).stdout, /not live protection/);
   for (const args of [['setup', '--harness'], ['setup', '--config', '--harness', 'pi'], ['setup', '--harness', 'unknown'], ['status', '--gateway'], ['setup', '--command', 'x'], ['--harness', 'pi'], ['status', '--config', '/tmp/x']]) {
     assert.equal(run(args).status, 1, args.join(' '));
   }
@@ -29,4 +29,14 @@ test('backend argument --configure does not dispatch the setup wizard', () => {
   assert.equal(result.error, undefined);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).result.serverInfo.name, 'fake-mcp-server');
+});
+
+test('removed harnesses are rejected by setup and status', () => {
+  for (const harness of ['claude-desktop', 'cursor', 'windsurf', 'vscode', 'cline', 'generic']) {
+    for (const action of ['setup', 'status']) {
+      const result = run([action, '--harness', harness]);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /Unknown harness/);
+    }
+  }
 });

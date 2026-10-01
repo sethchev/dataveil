@@ -4,27 +4,32 @@
   "private": true,
   "description": "DataVeil: database-agnostic privacy proxy for MCP tool results.",
   "type": "module",
-  "keywords": [
-    "pi-package"
-  ],
   "workspaces": [
     "dataveil-mcp-proxy"
   ],
   "scripts": {
     "build": "npm run build -w @dataveil/mcp-proxy",
     "test": "node --test test/*.test.mjs",
-    "test:mcp-proxy": "node --test test/mcp-proxy.test.mjs"
+    "test:mcp-proxy": "node --test test/mcp-proxy.test.mjs",
+    "test:pi": "node --test test/pi-configure.test.mjs test/pi-extension.test.mjs test/pi-smoke.test.mjs",
+    "test:opencode": "node --test test/opencode-configure.test.mjs",
+    "test:codex": "node --test test/codex-configure.test.mjs",
+    "test:pi:live": "DATAVEIL_PI_SMOKE=1 npm run test:pi",
+    "test:opencode:live": "DATAVEIL_OPENCODE_SMOKE=1 npm run test:opencode"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",
     "typescript": "^5.6.3"
   },
+  "keywords": [
+    "pi-package"
+  ],
   "pi": {
     "extensions": [
-      "./extensions/dataveil.ts"
+      "./harnesses/pi/extensions/dataveil.ts"
     ],
     "skills": [
-      "./skills/dataveil"
+      "./harnesses/pi/skills/dataveil"
     ]
   }
 }

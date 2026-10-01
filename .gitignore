@@ -3,3 +3,13 @@ dist/
 .env
 *.log
 /dataveil-profiles.json
+
+# Local harness registrations and personal DataVeil connection settings
+/opencode.json
+/opencode.jsonc
+/.pi/
+/.codex/
+/.mcp.json
+/.config/dataveil/
+*.bak-*
+*.tmp-*

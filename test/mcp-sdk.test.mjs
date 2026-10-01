@@ -17,8 +17,8 @@ test('official SDK launches generated packed config outside repository and disco
   copyFileSync(fake, backend);
   for (const mode of ['redact', 'block']) {
     const answers = ['Other database / custom MCP', 'Installed stdio MCP executable', process.execPath, JSON.stringify([backend]), mode, 'demo', 'Save'];
-    const take = async (title) => title.startsWith('Configure ') ? 'Confirm' : title === 'Shared DataVeil connection' ? 'Add a new connection' : title.startsWith('Replace shared connection') ? 'Replace' : answers.shift();
-    const result = await runConfigure('generic', { cwd, scriptPath, settingsFile: join(cwd, 'shared.json'), configPath: join(cwd, `mcp-${mode}.json`), ui: { input: take, select: take } });
+    const take = async (title) => title.startsWith('Configure ') ? 'Confirm' : title === 'Saved DataVeil connection' ? 'Add a new connection' : title.startsWith('Replace saved connection') ? 'Replace' : answers.shift();
+    const result = await runConfigure('pi', { cwd, scriptPath, settingsFile: join(cwd, 'settings.json'), configPath: join(cwd, `mcp-${mode}.json`), ui: { input: take, select: take } });
     const transport = new StdioClientTransport({ command: result.server.command, args: result.server.args, env: { ...process.env, ...result.server.env }, cwd, stderr: 'pipe' });
     const client = new Client({ name: 'dataveil-independent-test', version: '1.0.0' });
     try {

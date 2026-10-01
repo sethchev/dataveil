@@ -9,14 +9,14 @@ import { parseArguments } from '../dataveil-mcp-proxy/src/proxy.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { detectHarness, harnesses, runConfigure, runStatus } from '../dataveil-mcp-proxy/src/configure.js';
-import { loadSettings, settingsPath, resolveConnection, validateSettings } from '../dataveil-mcp-proxy/src/settings.js';
+import { loadSettings, settingsPath, profilesPath, resolveConnection, validateSettings } from '../dataveil-mcp-proxy/src/settings.js';
 
 const script = fileURLToPath(new URL('../dataveil-mcp-proxy/src/index.js', import.meta.url));
 const backend = fileURLToPath(new URL('./fixtures/fake-mcp-server.mjs', import.meta.url));
 function fixture(t) {
-  const cwd = mkdtempSync(join(tmpdir(), 'dataveil-shared-'));
+  const cwd = mkdtempSync(join(tmpdir(), 'dataveil-settings-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
-  return { cwd, settingsFile: join(cwd, 'shared.json') };
+  return { cwd, settingsFile: join(cwd, 'settings.json') };
 }
 function ui(values, before = () => {}) {
   const take = async (title, choices) => { before(title, choices); assert.ok(values.length, title); return values.shift(); };
@@ -34,9 +34,7 @@ async function connect(server, cwd) {
 test('detects harness environment and requires confirmation before any file prompt', async (t) => {
   const opts = fixture(t);
   for (const [env, expected] of [
-    [{ CODEX_THREAD_ID: 'synthetic' }, 'codex'], [{ TERM_PROGRAM: 'cursor' }, 'cursor'],
-    [{ TERM_PROGRAM: 'windsurf' }, 'windsurf'], [{ TERM_PROGRAM: 'vscode' }, 'vscode'],
-    [{ VSCODE_PID: '123' }, 'vscode'], [{ OPENCODE: '1', TERM_PROGRAM: 'vscode' }, 'opencode'], [{ OPENCODE_PID: '123' }, 'opencode'], [{ CODEX_THREAD_ID: 'synthetic', TERM_PROGRAM: 'vscode' }, 'codex'],
+    [{ CODEX_THREAD_ID: 'synthetic' }, 'codex'], [{ OPENCODE: '1' }, 'opencode'], [{ OPENCODE_PID: '123' }, 'opencode'],
   ]) {
     assert.equal(detectHarness(env), expected);
     let prompts = 0;
@@ -45,115 +43,101 @@ test('detects harness environment and requires confirmation before any file prom
     }) });
     assert.equal(prompts, 1); assert.equal(result.status, 'cancelled'); assert.equal(existsSync(opts.settingsFile), false);
   }
+  assert.equal(detectHarness({ TERM_PROGRAM: 'cursor', VSCODE_PID: '123' }), null);
   assert.equal(detectHarness({ CODEX_HOME: '/tmp/example' }), null);
 });
 
 test('user can reject detected harness, pick another, or cancel at the fallback chooser', async (t) => {
   const opts = fixture(t);
-  const result = await runConfigure(null, { ...opts, env: { CODEX_THREAD_ID: 'synthetic' }, configPath: join(opts.cwd, 'cursor.json'), ui: ui(['Choose another harness', 'Cursor', ...create().slice(1)]) });
-  assert.equal(result.harnessKey, 'cursor');
+  const result = await runConfigure(null, { ...opts, env: { CODEX_THREAD_ID: 'synthetic' }, configPath: join(opts.cwd, 'pi.json'), ui: ui(['Choose another harness', 'Pi', ...create().slice(1)]) });
+  assert.equal(result.harnessKey, 'pi');
   const source = readFileSync(opts.settingsFile, 'utf8');
   assert.equal((await runConfigure(null, { ...opts, env: { CODEX_THREAD_ID: 'synthetic' }, ui: ui(['Choose another harness', undefined]) })).status, 'cancelled');
   assert.equal(readFileSync(opts.settingsFile, 'utf8'), source);
 });
 
-test('every harness registration is saved and reuses the same connection without backend prompts', async (t) => {
-  const opts = fixture(t);
+test('default settings and policy stay isolated for Pi, OpenCode and Codex', { timeout: 15000 }, async (t) => {
+  const { cwd } = fixture(t);
+  const env = { XDG_CONFIG_HOME: join(cwd, 'config'), APPDATA: join(cwd, 'config') };
   const saved = [];
   for (const harness of harnesses) {
-    const configPath = nativePath(opts, harness);
-    const values = saved.length ? ['Confirm', 'database', 'database', 'Save'] : create();
-    saved.push(await runConfigure(harness.key, { ...opts, configPath, ui: ui(values) }));
+    const result = await runConfigure(harness.key, { cwd, env, configPath: nativePath({ cwd }, harness), ui: ui(create()) });
+    saved.push(result);
+    assert.equal(result.settingsFile, settingsPath(env, harness.key));
+    const settings = loadSettings(result.settingsFile);
+    assert.equal(settings.harnesses.length, 1);
+    assert.equal(settings.harnesses[0].harnessKey, harness.key);
   }
-  const shared = loadSettings(opts.settingsFile);
-  assert.equal(Object.keys(shared.connections).length, 1);
-  assert.equal(shared.harnesses.length, harnesses.length);
+  assert.equal(new Set(saved.map((entry) => entry.settingsFile)).size, 3);
+  const original = saved.slice(1).map((entry) => readFileSync(entry.settingsFile, 'utf8'));
+  const piSettings = loadSettings(saved[0].settingsFile);
+  piSettings.connections.database.mode = 'block';
+  writeFileSync(saved[0].settingsFile, JSON.stringify(piSettings));
+  assert.deepEqual(saved.slice(1).map((entry) => readFileSync(entry.settingsFile, 'utf8')), original);
+  // Exercise each native launcher: only Pi's policy changed.
   for (const result of saved) {
-    assert.equal(result.settingsFile, opts.settingsFile);
-    assert.deepEqual((result.harnessKey === 'opencode' ? result.server.command.slice(2) : result.server.args.slice(1)), ['--connection', 'database', '--settings', opts.settingsFile]);
-    assert.equal(existsSync(result.configPath), true);
-    assert.ok(shared.harnesses.some((entry) => entry.harnessKey === result.harnessKey && entry.configPath === result.configPath));
+    const harness = harnesses.find((entry) => entry.key === result.harnessKey);
+    const client = await connect(harness.normalize ? harness.normalize(result.server) : result.server, cwd);
+    try {
+      const output = await client.callTool({ name: 'query', arguments: {} });
+      assert.equal(JSON.stringify(output).includes('alice@example.com'), false);
+      assert.match(JSON.stringify(output), result.harnessKey === 'pi' ? /DATAVEIL_BLOCKED/ : /REDACTED/);
+    } finally { await client.close(); }
   }
-  assert.equal(statSync(opts.settingsFile).mode & 0o777, 0o600);
-  const status = await runStatus({ ...opts, ui: {}, env: {} });
-  for (const harness of harnesses) assert.ok(status.includes(nativePath(opts, harness)));
-  assert.equal((status.match(/shared connection database/g) ?? []).length, harnesses.length);
-  assert.match(status, /shared connection database/);
+  const status = await runStatus({ cwd, env, ui: {} });
+  for (const result of saved) assert.ok(status.includes(result.configPath));
+  assert.match(status, /database: DataVeil configured; block mode/);
+  assert.equal((status.match(/database: DataVeil configured; redact mode/g) ?? []).length, 2);
 });
 
-test('two simultaneous clients from Codex and VS Code launchers read shared policy and remain independent', { timeout: 15000 }, async (t) => {
+test('explicit settings path cannot mix harness registrations', async (t) => {
   const opts = fixture(t);
-  const codex = await runConfigure('codex', { ...opts, configPath: join(opts.cwd, 'config.toml'), ui: ui(create()) });
-  const vscode = await runConfigure('vscode', { ...opts, configPath: join(opts.cwd, 'vscode.json'), ui: ui(['Confirm', 'database', 'database', 'Save']) });
-  const clients = await Promise.all([connect(codex.server, opts.cwd), connect(vscode.server, opts.cwd)]);
-  try {
-    for (const client of clients) assert.ok((await client.listTools()).tools.some((tool) => tool.name === 'query'));
-    for (const result of await Promise.all(clients.map((client) => client.callTool({ name: 'query', arguments: {} })))) {
-      assert.match(JSON.stringify(result), /REDACTED/); assert.equal(JSON.stringify(result).includes('alice@example.com'), false);
-    }
-    await clients[0].close();
-    assert.match(JSON.stringify(await clients[1].callTool({ name: 'query', arguments: {} })), /REDACTED/);
-  } finally { await Promise.all(clients.map((client) => client.close())); }
-  // Changing shared policy doesn't require rewriting either harness file.
-  const files = [codex.configPath, vscode.configPath].map((path) => readFileSync(path, 'utf8'));
-  const shared = loadSettings(opts.settingsFile); shared.connections.database.mode = 'block';
-  writeFileSync(opts.settingsFile, JSON.stringify(shared));
-  const restarted = await Promise.all([connect(codex.server, opts.cwd), connect(vscode.server, opts.cwd)]);
-  try {
-    for (const result of await Promise.all(restarted.map((client) => client.callTool({ name: 'query', arguments: {} })))) {
-      assert.equal(result.isError, true); assert.match(JSON.stringify(result), /DATAVEIL_BLOCKED/); assert.equal(JSON.stringify(result).includes('alice@example.com'), false);
-    }
-  } finally { await Promise.all(restarted.map((client) => client.close())); }
-  assert.deepEqual([codex.configPath, vscode.configPath].map((path) => readFileSync(path, 'utf8')), files);
+  const first = await runConfigure('pi', { ...opts, configPath: join(opts.cwd, 'pi.json'), ui: ui(create()) });
+  const native = readFileSync(first.configPath, 'utf8');
+  const settings = readFileSync(opts.settingsFile, 'utf8');
+  await assert.rejects(runConfigure('codex', { ...opts, configPath: join(opts.cwd, 'config.toml'), ui: ui(['Confirm']) }), /requires its own DataVeil settings file/);
+  assert.equal(readFileSync(first.configPath, 'utf8'), native);
+  assert.equal(readFileSync(opts.settingsFile, 'utf8'), settings);
+  assert.equal(existsSync(join(opts.cwd, 'config.toml')), false);
 });
 
-test('registering another harness never overwrites earlier native configs or saved registration', async (t) => {
+test('cancelled reuse, malformed settings and concurrent settings edits never save a native entry', async (t) => {
   const opts = fixture(t);
-  const first = await runConfigure('cursor', { ...opts, configPath: join(opts.cwd, 'cursor.json'), ui: ui(create()) });
-  const bytes = readFileSync(first.configPath, 'utf8');
-  await runConfigure('codex', { ...opts, configPath: join(opts.cwd, 'config.toml'), ui: ui(['Confirm', 'database', 'codex_database', 'Save']) });
-  assert.equal(readFileSync(first.configPath, 'utf8'), bytes);
-  const config = loadSettings(opts.settingsFile);
-  assert.equal(config.harnesses.length, 2); assert.equal(config.harnesses[1].connection, 'database');
-});
-
-test('cancelled reuse, malformed settings and concurrent shared edits never save a native entry', async (t) => {
-  const opts = fixture(t);
-  await runConfigure('cursor', { ...opts, configPath: join(opts.cwd, 'cursor.json'), ui: ui(create()) });
-  const configPath = join(opts.cwd, 'vscode.json');
+  await runConfigure('pi', { ...opts, configPath: join(opts.cwd, 'pi.json'), ui: ui(create()) });
+  const configPath = join(opts.cwd, 'pi-second.json');
   const bytes = readFileSync(opts.settingsFile, 'utf8');
   for (const values of [['Confirm', undefined], ['Confirm', 'database', undefined], ['Confirm', 'database', 'database', undefined]]) {
-    assert.equal((await runConfigure('vscode', { ...opts, configPath, ui: ui(values) })).status, 'cancelled');
+    assert.equal((await runConfigure('pi', { ...opts, configPath, ui: ui(values) })).status, 'cancelled');
     assert.equal(readFileSync(opts.settingsFile, 'utf8'), bytes); assert.equal(existsSync(configPath), false);
   }
-  await assert.rejects(runConfigure('vscode', { ...opts, configPath, ui: ui(['Confirm', 'database', 'database', 'Save'], (title) => {
+  await assert.rejects(runConfigure('pi', { ...opts, configPath, ui: ui(['Confirm', 'database', 'database', 'Save'], (title) => {
     if (title.startsWith('Save ')) { const config = loadSettings(opts.settingsFile); config.connections.database.mode = 'block'; writeFileSync(opts.settingsFile, JSON.stringify(config)); }
   }) }), /changed during setup/);
   assert.equal(existsSync(configPath), false);
   writeFileSync(opts.settingsFile, '{');
-  await assert.rejects(runConfigure('vscode', { ...opts, configPath, ui: ui(['Confirm']) }), /Malformed JSON/);
+  await assert.rejects(runConfigure('pi', { ...opts, configPath, ui: ui(['Confirm']) }), /Malformed JSON/);
   assert.equal(existsSync(configPath), false); assert.equal(readFileSync(opts.settingsFile, 'utf8'), '{');
 });
 
-test('failed native save rolls back shared config exactly; active lock refuses another writer', async (t) => {
+test('failed native save rolls back settings exactly; active lock refuses another writer', async (t) => {
   if (process.platform === 'win32') return t.skip('POSIX permission failure fixture');
   const opts = fixture(t);
   const original = '{ "version": 1, "connections": {}, "harnesses": [] }\n';
   writeFileSync(opts.settingsFile, original);
   const parent = join(opts.cwd, 'parent'); mkdirSync(parent);
   const configPath = join(parent, 'mcp.json');
-  await assert.rejects(runConfigure('generic', { ...opts, configPath, ui: ui(create(), (title) => {
+  await assert.rejects(runConfigure('pi', { ...opts, configPath, ui: ui(create(), (title) => {
     if (title.startsWith('Save ')) chmodSync(parent, 0o500);
   }) }));
   chmodSync(parent, 0o700);
   assert.equal(readFileSync(opts.settingsFile, 'utf8'), original);
   writeFileSync(`${opts.settingsFile}.lock`, '');
-  await assert.rejects(runConfigure('generic', { ...opts, configPath: join(opts.cwd, 'another.json'), ui: ui(create()) }), /Another DataVeil setup/);
+  await assert.rejects(runConfigure('pi', { ...opts, configPath: join(opts.cwd, 'another.json'), ui: ui(create()) }), /Another DataVeil setup/);
   assert.equal(readFileSync(opts.settingsFile, 'utf8'), original);
   assert.equal(existsSync(join(opts.cwd, 'another.json')), false);
 });
 
-test('CLI rejects unknown/malformed shared connections and incompatible backend options without MCP output', (t) => {
+test('CLI rejects unknown/malformed saved connections and incompatible backend options without MCP output', (t) => {
   const opts = fixture(t);
   writeFileSync(opts.settingsFile, JSON.stringify({ version: 1, connections: {}, harnesses: [] }));
   for (const args of [
@@ -167,9 +151,9 @@ test('CLI rejects unknown/malformed shared connections and incompatible backend 
 });
 
 
-test('shared mode defaults and CLI/environment overrides remain explicit', async (t) => {
+test('saved mode defaults and CLI/environment overrides remain explicit', async (t) => {
   const opts = fixture(t);
-  await runConfigure('generic', { ...opts, configPath: join(opts.cwd, 'native.json'), ui: ui(create('block')) });
+  await runConfigure('pi', { ...opts, configPath: join(opts.cwd, 'native.json'), ui: ui(create('block')) });
   const args = ['--connection', 'database', '--settings', opts.settingsFile];
   const resolved = (argv, env = {}) => resolveConnection(parseArguments(argv, env), argv, env);
   assert.equal(resolved(args).mode, 'block');
@@ -184,7 +168,7 @@ test('shared mode defaults and CLI/environment overrides remain explicit', async
   if (process.platform !== 'win32') assert.equal(settingsPath({ XDG_CONFIG_HOME: opts.cwd }), join(opts.cwd, 'dataveil', 'config.json'));
 });
 
-test('invalid shared schemas cannot weaken protection or silently drop registrations', () => {
+test('invalid settings schemas cannot weaken protection or silently drop registrations', () => {
   for (const value of [
     {}, { version: 2, connections: {}, harnesses: [] },
     { version: 1, connections: { demo: { command: 'node', args: [], mode: 'bad' } }, harnesses: [] },
@@ -197,8 +181,8 @@ test('invalid shared schemas cannot weaken protection or silently drop registrat
 test('parallel setup writers detect a changed snapshot and retain the winning registration', async (t) => {
   const opts = fixture(t);
   const results = await Promise.allSettled([
-    runConfigure('cursor', { ...opts, configPath: join(opts.cwd, 'cursor.json'), ui: ui(create()) }),
-    runConfigure('codex', { ...opts, configPath: join(opts.cwd, 'config.toml'), ui: ui(create()) }),
+    runConfigure('pi', { ...opts, configPath: join(opts.cwd, 'pi.json'), ui: ui(create()) }),
+    runConfigure('pi', { ...opts, configPath: join(opts.cwd, 'pi-second.json'), ui: ui(create()) }),
   ]);
   assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
   assert.match(results.find((result) => result.status === 'rejected').reason.message, /changed during setup/);
@@ -206,4 +190,15 @@ test('parallel setup writers detect a changed snapshot and retain the winning re
   assert.equal(shared.harnesses.length, 1);
   assert.ok(existsSync(shared.harnesses[0].configPath));
   assert.equal(existsSync(`${opts.settingsFile}.lock`), false);
+});
+
+test('gateway profile defaults live beside DataVeil settings and respect overrides', (t) => {
+  const { cwd } = fixture(t);
+  const env = { XDG_CONFIG_HOME: cwd, APPDATA: cwd };
+  for (const harness of harnesses) {
+    assert.equal(profilesPath(env, harness.key), join(cwd, 'dataveil', harness.key, 'profiles.json'));
+  }
+  assert.equal(profilesPath(env), join(cwd, 'dataveil', 'profiles.json'));
+  assert.equal(profilesPath({ ...env, DATAVEIL_CONFIG_FILE: join(cwd, 'custom', 'config.json') }, 'pi'), join(cwd, 'custom', 'profiles.json'));
+  assert.equal(profilesPath({ ...env, DATAVEIL_PROFILES_FILE: join(cwd, 'explicit.json') }, 'pi'), join(cwd, 'explicit.json'));
 });
